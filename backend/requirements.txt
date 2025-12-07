@@ -1,1 +1,7 @@
-
+fastapi
+uvicorn
+pydantic
+openai
+tavily-python
+python-multipart
+requests
