@@ -4,4 +4,6 @@ pydantic
 openai
 tavily-python
 python-multipart
+pypdf2
+pandas
 requests
