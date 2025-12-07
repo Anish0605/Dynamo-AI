@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <!-- Google tag (gtag.js) -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-GHG5R9T5FN"></script>
+    <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+
+    gtag('config', 'G-GHG5R9T5FN');
+    </script>
+    <meta charset="UTF-8">
+    <title>Dynamo AI - Pricing</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap'); 
+        body { font-family: 'Inter', sans-serif; } 
+        .border-dynamo { border-color: #FFC107; } 
+        .bg-dynamo { background-color: #FFC107; } 
+        .text-dynamo { color: #FFC107; }
+        .bg-black-900 { background-color: #111; }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-900">
+
+    <nav class="max-w-7xl mx-auto px-6 py-6 flex justify-between items-center bg-gray-50 sticky top-0 z-50">
+        <a href="index.html" class="flex items-center gap-2 font-bold text-xl text-gray-900">
+            <div class="w-8 h-8 flex items-center justify-center border-2 border-dynamo rounded-lg bg-white">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M13 2L3 14H12L11 22L21 10H12L13 2Z" stroke="#FFC107" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+            </div>
+            <span>Dynamo</span>
+        </a>
+        <div class="flex gap-6 items-center">
+            <a href="index.html" class="text-sm font-medium text-gray-500 hover:text-black transition-colors">Home</a>
+            <a href="https://app.dynamoai.in/" class="text-sm font-medium text-gray-500 hover:text-black transition-colors">Log in</a>
+            <a href="https://app.dynamoai.in/" class="px-6 py-2.5 bg-black text-white text-sm font-semibold rounded-full hover:bg-gray-800 transition-transform transform hover:scale-105 shadow-lg">Sign up</a>
+        </div>
+    </nav>
+
+    <div class="max-w-7xl mx-auto px-4 py-16 text-center">
+        <h1 class="text-4xl md:text-5xl font-extrabold tracking-tight mb-4">Upgrade your research.</h1>
+        <p class="text-xl text-gray-500">Simple pricing. No hidden fees.</p>
+    </div>
+
+    <div class="max-w-5xl mx-auto px-4 grid grid-cols-1 md:grid-cols-2 gap-8 pb-20">
+        <!-- FREE TIER -->
+        <div class="bg-white p-10 rounded-3xl border border-gray-200 flex flex-col h-full hover:border-gray-300 transition-all shadow-sm">
+            <h3 class="text-2xl font-bold text-gray-900">Free</h3>
+            <p class="text-sm text-gray-500 mt-1">Essential tools for casual explorers.</p>
+            <div class="my-6"><span class="text-5xl font-extrabold">₹0</span><span class="text-gray-400 font-medium text-lg">/forever</span></div>
+            <a href="https://app.dynamoai.in/" class="block w-full text-center py-4 rounded-xl border-2 border-gray-100 font-bold hover:border-black hover:bg-gray-50 transition-all">Start Researching</a>
+            <div class="mt-8 space-y-4 text-sm text-gray-600 flex-1">
+                <p class="font-semibold text-gray-900 uppercase text-xs tracking-wider mb-3">Core Features</p>
+                <li class="flex gap-3 items-center"><i data-lucide="check" class="w-5 h-5 text-green-500 shrink-0"></i> Unlimited Llama 3 Chat</li>
+                <li class="flex gap-3 items-center"><i data-lucide="check" class="w-5 h-5 text-green-500 shrink-0"></i> Standard Web Search</li>
+                <li class="flex gap-3 items-center"><i data-lucide="check" class="w-5 h-5 text-green-500 shrink-0"></i> 5 Image Generations / day</li>
+                <li class="flex gap-3 items-center"><i data-lucide="check" class="w-5 h-5 text-green-500 shrink-0"></i> Basic Voice Mode</li>
+                <li class="flex gap-3 items-center"><i data-lucide="check" class="w-5 h-5 text-green-500 shrink-0"></i> Standard Response Speed</li>
+                <li class="flex gap-3 items-center"><i data-lucide="check" class="w-5 h-5 text-green-500 shrink-0"></i> 7-Day History Retention</li>
+                <li class="flex gap-3 items-center"><i data-lucide="check" class="w-5 h-5 text-green-500 shrink-0"></i> Access to Community Support</li>
+            </div>
+        </div>
+        <!-- PLUS TIER -->
+        <div class="bg-black-900 text-white p-10 rounded-3xl border-2 border-yellow-400 flex flex-col h-full relative shadow-2xl transform md:-translate-y-2">
+            <div class="absolute top-0 right-0 bg-yellow-400 text-black text-xs font-extrabold px-4 py-1.5 rounded-bl-xl rounded-tr-2xl tracking-wide">INTRODUCTORY OFFER</div>
+            <h3 class="text-2xl font-bold text-yellow-400">Plus</h3>
+            <p class="text-sm text-gray-400 mt-1">Power tools for serious thinkers.</p>
+            <div class="my-6 flex items-baseline gap-2"><span class="text-5xl font-extrabold">₹99</span><span class="text-gray-400 font-medium text-lg">/mo</span><span class="text-gray-600 line-through text-sm ml-2">₹999</span></div>
+            <button id="pay-plus-btn" class="block w-full text-center py-4 rounded-xl bg-yellow-400 text-black font-bold hover:bg-yellow-300 transition-colors shadow-[0_0_20px_rgba(255,193,7,0.4)]">Claim Offer</button>
+            <div class="mt-8 space-y-4 text-sm text-gray-300 flex-1">
+                <p class="font-semibold text-white uppercase text-xs tracking-wider mb-3">Everything in Free, plus:</p>
+                <li class="flex gap-3 items-center"><i data-lucide="zap" class="w-5 h-5 text-yellow-400 shrink-0"></i> <strong>Deep Dive Mode</strong></li>
+                <li class="flex gap-3 items-center"><i data-lucide="bar-chart-3" class="w-5 h-5 text-yellow-400 shrink-0"></i> <strong>Analyst Mode</strong></li>
+                <li class="flex gap-3 items-center"><i data-lucide="eye" class="w-5 h-5 text-yellow-400 shrink-0"></i> <strong>Dynamo Vision</strong></li>
+                <li class="flex gap-3 items-center"><i data-lucide="check" class="w-5 h-5 text-yellow-400 shrink-0"></i> Unlimited Image Generation</li>
+                <li class="flex gap-3 items-center"><i data-lucide="check" class="w-5 h-5 text-yellow-400 shrink-0"></i> Upload Large PDFs (50MB+)</li>
+                <li class="flex gap-3 items-center"><i data-lucide="check" class="w-5 h-5 text-yellow-400 shrink-0"></i> Unlimited History Retention</li>
+                <li class="flex gap-3 items-center"><i data-lucide="check" class="w-5 h-5 text-yellow-400 shrink-0"></i> Export Chats to PDF/Text</li>
+                <li class="flex gap-3 items-center"><i data-lucide="check" class="w-5 h-5 text-yellow-400 shrink-0"></i> Priority Support Channel</li>
+            </div>
+        </div>
+    </div>
+
+    <!-- FOOTER (Updated: Single Line) -->
+    <footer class="py-8 text-center border-t border-gray-200">
+        <div class="flex flex-col items-center gap-2">
+             <div class="flex gap-4 text-sm text-gray-500 mb-2">
+                <a href="privacy.html" class="hover:text-black">Privacy</a>
+                <a href="terms.html" class="hover:text-black">Terms</a>
+                <a href="refund.html" class="hover:text-black">Refunds</a>
+             </div>
+             
+        <div class="flex items-center justify-center gap-4 text-sm text-gray-500">
+             <a href="mailto:support@dynamoai.in" class="hover:text-black transition-colors">support@dynamoai.in</a>
+             <span class="text-gray-300">|</span>
+             <span class="flex items-center gap-2">Made in India <span class="text-xl">🇮🇳</span></span>
+        </div>
+    </footer>
+
+    <script>lucide.createIcons();</script>
+    <script>
+    document.getElementById('pay-plus-btn').onclick = function(e){
+        e.preventDefault();
+        var _partA = "rzp_live_"; 
+        var _partB = "RolIiZAHtaW7g8"; 
+        var finalKey = _partA + _partB;
+        var options = {
+            "key": finalKey, 
+            "amount": "9900", 
+            "currency": "INR",
+            "name": "Dynamo AI",
+            "description": "Plus Plan - Monthly Subscription",
+            "image": "https://dynamoai.in/logo.png",
+            "handler": function (response){
+                alert("Payment Successful! Payment ID: " + response.razorpay_payment_id);
+                window.location.href = "https://app.dynamoai.in/?status=success";
+            },
+            "prefill": { "name": "", "email": "" },
+            "theme": { "color": "#FFC107" }
+        };
+        var rzp1 = new Razorpay(options);
+        rzp1.on('payment.failed', function (response){
+            alert("Payment Failed. Reason: " + response.error.description);
+        });
+        rzp1.open();
+    }
+    </script>
+</body>
+</html>
