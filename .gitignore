@@ -1,1 +1,22 @@
-Pythonpycache/*.py[cod]*$py.classvenv/env/.envOS.DS_StoreThumbs.dbIDEs.vscode/.idea/Streamlit (if you ever use it locally).streamlit/Node/Frontend (if you use it locally)
+Python
+
+pycache/
+*.py[cod]
+*$py.class
+venv/
+env/
+.env
+
+OS
+
+.DS_Store
+Thumbs.db
+
+IDEs
+
+.vscode/
+.idea/
+
+Streamlit
+
+.streamlit/
