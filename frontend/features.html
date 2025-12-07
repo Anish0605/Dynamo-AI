@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <!-- Google tag (gtag.js) -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-GHG5R9T5FN"></script>
+    <script>
+     window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+
+    gtag('config', 'G-GHG5R9T5FN');
+</script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dynamo AI - Features</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; }
+        .text-dynamo { color: #FFC107; }
+        .bg-dynamo { background-color: #FFC107; }
+        .border-dynamo { border-color: #FFC107; }
+        .gradient-text {
+            background: linear-gradient(90deg, #FFC107, #FF9800);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+    </style>
+</head>
+<body class="bg-white text-gray-900">
+
+    <!-- NAV -->
+    <nav class="max-w-7xl mx-auto px-6 py-6 flex justify-between items-center bg-white sticky top-0 z-50">
+        <a href="index.html" class="flex items-center gap-2 font-bold text-xl text-gray-900">
+            <div class="w-8 h-8 flex items-center justify-center border-2 border-dynamo rounded-lg bg-white">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M13 2L3 14H12L11 22L21 10H12L13 2Z" stroke="#FFC107" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+            </div>
+            <span>Dynamo</span>
+        </a>
+        <div class="flex gap-6 items-center">
+            <a href="index.html" class="text-sm font-medium text-gray-500 hover:text-black transition-colors">Home</a>
+            <a href="https://app.dynamoai.in/" class="text-sm font-medium text-gray-500 hover:text-black transition-colors">Log in</a>
+            <a href="https://app.dynamoai.in/" class="px-6 py-2.5 bg-black text-white text-sm font-semibold rounded-full hover:bg-gray-800 transition-transform transform hover:scale-105 shadow-lg">Try Now</a>
+        </div>
+    </nav>
+
+    <!-- HERO (Updated) -->
+    <section class="py-24 text-center px-4">
+        <h2 class="text-sm font-bold text-dynamo tracking-widest uppercase mb-4">Power Your Curiosity</h2>
+        <h1 class="text-5xl md:text-6xl font-extrabold tracking-tight mb-6 text-gray-900">
+            Everything you need to <span class="gradient-text">know faster.</span>
+        </h1>
+        <p class="text-xl text-gray-500 max-w-2xl mx-auto leading-relaxed">
+            A complete Research Operating System powered by Groq, Tavily, and Llama 3.
+        </p>
+    </section>
+
+    <!-- CONTENT SECTIONS (Grid, How-To) -->
+    <section class="py-12 px-4 max-w-7xl mx-auto">
+         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+            <div class="p-8 border border-gray-100 rounded-3xl shadow-sm hover:shadow-lg transition-all hover:-translate-y-1">
+                <div class="w-12 h-12 bg-yellow-50 rounded-xl flex items-center justify-center mb-6"><i data-lucide="zap" class="w-6 h-6 text-yellow-500"></i></div>
+                <h3 class="text-xl font-bold mb-3">Hyper-Fast Inference</h3>
+                <p class="text-gray-600 leading-relaxed">Runs on Groq's LPU for instant answers. Zero latency reasoning.</p>
+            </div>
+            <div class="p-8 border border-gray-100 rounded-3xl shadow-sm hover:shadow-lg transition-all hover:-translate-y-1">
+                <div class="w-12 h-12 bg-blue-50 rounded-xl flex items-center justify-center mb-6"><i data-lucide="mic" class="w-6 h-6 text-blue-500"></i></div>
+                <h3 class="text-xl font-bold mb-3">Voice-to-Text</h3>
+                <p class="text-gray-600 leading-relaxed">Speak your queries using Whisper. High accuracy transcription.</p>
+            </div>
+            <div class="p-8 border border-gray-100 rounded-3xl shadow-sm hover:shadow-lg transition-all hover:-translate-y-1">
+                <div class="w-12 h-12 bg-green-50 rounded-xl flex items-center justify-center mb-6"><i data-lucide="globe" class="w-6 h-6 text-green-500"></i></div>
+                <h3 class="text-xl font-bold mb-3">Live Fact-Checking</h3>
+                <p class="text-gray-600 leading-relaxed">Connects to Tavily to verify facts in real-time.</p>
+            </div>
+            <div class="p-8 border border-gray-100 rounded-3xl shadow-sm hover:shadow-lg transition-all hover:-translate-y-1">
+                <div class="w-12 h-12 bg-red-50 rounded-xl flex items-center justify-center mb-6"><i data-lucide="file-text" class="w-6 h-6 text-red-500"></i></div>
+                <h3 class="text-xl font-bold mb-3">Document Analysis</h3>
+                <p class="text-gray-600 leading-relaxed">Upload PDFs and chat with them. Extract summaries instantly.</p>
+            </div>
+            <div class="p-8 border border-gray-100 rounded-3xl shadow-sm hover:shadow-lg transition-all hover:-translate-y-1">
+                 <div class="w-12 h-12 bg-indigo-50 rounded-xl flex items-center justify-center mb-6"><i data-lucide="align-left" class="w-6 h-6 text-indigo-500"></i></div>
+                <h3 class="text-xl font-bold mb-3">Smart Summarization</h3>
+                <p class="text-gray-600 leading-relaxed">Condense long research threads instantly.</p>
+            </div>
+            <div class="p-8 border border-gray-100 rounded-3xl shadow-sm hover:shadow-lg transition-all hover:-translate-y-1">
+                <div class="w-12 h-12 bg-orange-50 rounded-xl flex items-center justify-center mb-6"><i data-lucide="baby" class="w-6 h-6 text-orange-500"></i></div>
+                <h3 class="text-xl font-bold mb-3">Instant Simplification</h3>
+                <p class="text-gray-600 leading-relaxed">Explain complex topics in ELI5 language.</p>
+            </div>
+            <div class="p-8 border border-gray-100 rounded-3xl shadow-sm hover:shadow-lg transition-all hover:-translate-y-1">
+                <div class="w-12 h-12 bg-purple-50 rounded-xl flex items-center justify-center mb-6"><i data-lucide="palette" class="w-6 h-6 text-purple-500"></i></div>
+                <h3 class="text-xl font-bold mb-3">High-Voltage UI</h3>
+                <p class="text-gray-600 leading-relaxed">Custom styling with "Dynamo Yellow" (#FFC107) and Black aesthetic.</p>
+            </div>
+            <div class="p-8 border border-gray-100 rounded-3xl shadow-sm hover:shadow-lg transition-all hover:-translate-y-1">
+                <div class="w-12 h-12 bg-gray-50 rounded-xl flex items-center justify-center mb-6"><i data-lucide="download" class="w-6 h-6 text-gray-500"></i></div>
+                <h3 class="text-xl font-bold mb-3">Export History</h3>
+                <p class="text-gray-600 leading-relaxed">Download your entire research session as a .txt file.</p>
+            </div>
+        </div>
+    </section>
+
+    <section class="py-24 bg-black text-white relative overflow-hidden">
+        <div class="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[400px] bg-yellow-500/10 blur-[120px] rounded-full pointer-events-none"></div>
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
+            <div class="mb-16"><h2 class="text-3xl md:text-5xl font-bold tracking-tight">How to use Dynamo</h2></div>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-12">
+                <div class="group">
+                    <div class="h-0.5 w-full bg-gray-800 mb-6 group-hover:bg-dynamo transition-colors duration-500"></div>
+                    <span class="text-dynamo font-mono text-sm font-bold tracking-wider">01</span>
+                    <h3 class="text-2xl font-bold mt-3 mb-4">Input your way</h3>
+                    <p class="text-gray-400">Voice, Text, or Image inputs supported.</p>
+                </div>
+                <div class="group">
+                    <div class="h-0.5 w-full bg-gray-800 mb-6 group-hover:bg-dynamo transition-colors duration-500 delay-100"></div>
+                    <span class="text-dynamo font-mono text-sm font-bold tracking-wider">02</span>
+                    <h3 class="text-2xl font-bold mt-3 mb-4">Select your depth</h3>
+                    <p class="text-gray-400">Deep Dive or Analyst Mode for complex tasks.</p>
+                </div>
+                <div class="group">
+                    <div class="h-0.5 w-full bg-gray-800 mb-6 group-hover:bg-dynamo transition-colors duration-500 delay-200"></div>
+                    <span class="text-dynamo font-mono text-sm font-bold tracking-wider">03</span>
+                    <h3 class="text-2xl font-bold mt-3 mb-4">Generate & Export</h3>
+                    <p class="text-gray-400">Get answers, charts, or images and download history.</p>
+                </div>
+            </div>
+            <div class="mt-20 text-center">
+                <a href="https://app.dynamoai.in/" class="inline-flex items-center justify-center px-8 py-4 text-base font-bold text-black bg-dynamo rounded-full hover:bg-yellow-400 transition-all transform hover:scale-105">Try Dynamo Now <i data-lucide="arrow-right" class="ml-2 w-5 h-5"></i></a>
+            </div>
+        </div>
+    </section>
+
+    <!-- FOOTER -->
+    <footer class="bg-gray-50 py-16 border-t border-gray-200 mt-12">
+        <div class="max-w-7xl mx-auto px-4 text-center">
+            <h2 class="text-sm font-bold mb-8 text-gray-400 uppercase tracking-widest">Tech Stack</h2>
+            <div class="flex flex-wrap justify-center gap-4 text-sm font-medium text-gray-600 mb-10">
+                <span class="px-4 py-2 bg-white border rounded-full">Streamlit</span>
+                <span class="px-4 py-2 bg-white border rounded-full">Groq</span>
+                <span class="px-4 py-2 bg-white border rounded-full">Whisper</span>
+                <span class="px-4 py-2 bg-white border rounded-full">Tavily</span>
+            </div>
+            
+            <!-- FIXED BOTTOM ROW -->
+            <div class="pt-8 border-t border-gray-200 flex justify-center items-center gap-4 text-sm text-gray-500">
+                <div class="flex gap-4 text-sm text-gray-500">
+                    <a href="privacy.html" class="hover:text-black">Privacy</a>
+                    <a href="terms.html" class="hover:text-black">Terms</a>
+                    <a href="refund.html" class="hover:text-black">Refunds</a>
+                </div>
+                
+                <a href="mailto:support@dynamoai.in" class="hover:text-black transition-colors font-medium">support@dynamoai.in</a>
+                <span class="text-gray-300">|</span>
+                <span class="flex items-center gap-1 font-medium">Made in India <span class="text-xl">🇮🇳</span></span>
+            </div>
+        </div>
+    </footer>
+
+    <script>lucide.createIcons();</script>
+</body>
+</html>
