@@ -1,22 +1,15 @@
-Python
-
-pycache/
+# Python
+__pycache__/
 *.py[cod]
 *$py.class
 venv/
 env/
 .env
-
-OS
-
+# OS
 .DS_Store
 Thumbs.db
-
-IDEs
-
+# IDEs
 .vscode/
 .idea/
-
-Streamlit
-
+# Streamlit
 .streamlit/
