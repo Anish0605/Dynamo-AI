@@ -1,11 +1,11 @@
-// ⚠️ IMPORTANT: After deploying the backend to Render, replace this URL!
-// Example: const API_URL = "https://dynamo-brain.onrender.com";
+// ✅ FIXED: Connected to your Live Render Backend
 const API_URL = "https://dynamo-ai.onrender.com"; 
 
 // DOM Elements
 const chatContainer = document.getElementById('chat-container');
 const inputField = document.getElementById('chat-input');
-const sendBtn = document.querySelector('button i[data-lucide="arrow-up"]').parentElement;
+// Select the send button based on the arrow icon we used in index.html
+const sendBtn = document.querySelector('button i[data-lucide="arrow-up"]')?.parentElement;
 
 // State
 let chatHistory = [];
@@ -15,10 +15,10 @@ let sessionId = crypto.randomUUID();
 async function sendMessage(text) {
     if (!text) return;
     
-    // Clear Input
+    // Clear Input immediately
     if (inputField) inputField.value = "";
 
-    // 1. Add User Bubble
+    // 1. Add User Bubble to UI
     addMessageToUI("user", text);
     
     // 2. Add Loading Indicator
@@ -29,13 +29,13 @@ async function sendMessage(text) {
         session_id: sessionId,
         message: text,
         history: chatHistory,
-        use_search: true, // Default to true, or connect to a toggle
+        use_search: true, 
         deep_dive: false,
         analyst_mode: false
     };
 
     try {
-        // 4. Send to Python Backend
+        // 4. Send to Python Backend (Render)
         const response = await fetch(`${API_URL}/chat`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -55,8 +55,7 @@ async function sendMessage(text) {
             addImageToUI(data.content);
             chatHistory.push({role: "assistant", content: "Generated image: " + data.content});
         } else if (data.type === "chart") {
-            addMessageToUI("assistant", "📊 Chart Data Received (Visualization pending implementation)");
-            // In a real app, you'd pass data.content to Chart.js here
+            addMessageToUI("assistant", "📊 Chart Data Received: " + JSON.stringify(data.content));
             chatHistory.push({role: "assistant", content: "Chart generated"});
         } else {
             addMessageToUI("assistant", data.content);
@@ -69,7 +68,7 @@ async function sendMessage(text) {
     } catch (error) {
         console.error(error);
         const loader = document.getElementById(loadingId);
-        if (loader) loader.innerText = "⚠️ Error: Could not connect to Dynamo Brain. Is the backend running?";
+        if (loader) loader.innerHTML = `⚠️ <span style="color:red">Error: Backend is sleeping.</span><br><br>Since you are on the Free Tier, Render pauses the server when not used. Please wait 60 seconds and try again.`;
     }
 }
 
@@ -90,33 +89,16 @@ function addMessageToUI(role, text) {
     div.innerText = text;
     
     // Append to container
-    // We create a wrapper if it doesn't exist to separate the "Greeting" from "Chat"
-    let wrapper = document.getElementById('messages-wrapper');
-    if (!wrapper) {
-        wrapper = document.createElement('div');
-        wrapper.id = 'messages-wrapper';
-        wrapper.className = "flex flex-col w-full max-w-4xl mx-auto";
-        // Hide the greeting logo if chat starts
-        const greeting = document.querySelector('.animate-fade-in-up');
-        if(greeting) greeting.style.display = 'none';
-        
-        // Insert wrapper before the input box container
-        chatContainer.insertBefore(wrapper, chatContainer.firstChild); 
-        // Actually, simpler to just append to main container and ensure flex-col is set
-    }
+    const mainArea = document.getElementById('chat-container'); 
     
-    // Simple Append Strategy for now
-    // Find the container where messages should go. In index.html, the main area is flex-col.
-    // We might need to hide the initial "How can I help you" content.
-    const mainArea = document.querySelector('main > div.flex-grow'); 
+    // Hide Greeting if it exists
+    const greeting = document.getElementById('greeting');
+    if(greeting) greeting.style.display = 'none';
+
     if (mainArea) {
-        // Clear initial greeting on first message
-        if (chatHistory.length === 0) {
-            mainArea.innerHTML = ''; 
-            mainArea.className = "flex-grow flex flex-col p-4 w-full max-w-4xl mx-auto overflow-y-auto pb-40"; 
-        }
         mainArea.appendChild(div);
-        mainArea.scrollTop = mainArea.scrollHeight; // Auto scroll
+        // Auto scroll to bottom
+        mainArea.scrollTop = mainArea.scrollHeight;
     }
     
     return id;
@@ -127,34 +109,27 @@ function addImageToUI(url) {
     img.src = url;
     img.className = "rounded-xl shadow-md max-w-md mb-4 border border-gray-200";
     
-    const mainArea = document.querySelector('main > div.flex-grow');
+    const mainArea = document.getElementById('chat-container');
     if (mainArea) {
         mainArea.appendChild(img);
         mainArea.scrollTop = mainArea.scrollHeight;
     }
 }
 
-// --- EVENT LISTENERS ---
+// --- CONNECT HTML BUTTONS TO JS ---
 
-// 1. Send Button
-if (sendBtn) {
-    sendBtn.addEventListener('click', () => sendMessage(inputField.value));
-}
-
-// 2. Enter Key
+// 1. Enter Key Listener
 if (inputField) {
     inputField.addEventListener('keypress', (e) => {
         if (e.key === 'Enter') sendMessage(inputField.value);
     });
 }
 
-// 3. Quick Suggestion Pills (Wait for DOM load)
-document.addEventListener('DOMContentLoaded', () => {
-    const suggestions = document.querySelectorAll('button span'); // Rough selector for suggestion text
-    // Better way: Add onclick="sendQuickPrompt('...')" to HTML buttons in index.html
-});
+// 2. Window Functions (For HTML onclick="")
+window.sendFromInput = function() {
+    if (inputField) sendMessage(inputField.value);
+}
 
-// Helper for HTML onClick events
 window.sendQuickPrompt = function(text) {
     sendMessage(text);
 }
