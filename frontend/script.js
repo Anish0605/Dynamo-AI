@@ -1,6 +1,6 @@
 // ⚠️ IMPORTANT: After deploying the backend to Render, replace this URL!
 // Example: const API_URL = "https://dynamo-brain.onrender.com";
-const API_URL = "http://localhost:8000"; 
+const API_URL = "https://dynamo-ai.onrender.com"; 
 
 // DOM Elements
 const chatContainer = document.getElementById('chat-container');
