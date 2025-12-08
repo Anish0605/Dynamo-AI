@@ -1,9 +1,8 @@
 fastapi
-uvicorn
-pydantic
+uvicorn[standard]
 openai
 tavily-python
 python-multipart
-pypdf2
+PyPDF2
 pandas
 requests
