@@ -5,23 +5,20 @@ from typing import List, Optional
 from openai import OpenAI
 from tavily import TavilyClient
 import PyPDF2
-import json
 import base64
 import os
 import io
 
 # --- CONFIGURATION ---
-# In production (Render/Railway), set these as Environment Variables.
-# For local testing, you can paste keys here, but DO NOT commit keys to GitHub.
-GROQ_API_KEY = os.getenv("GROQ_API_KEY") 
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
 
 app = FastAPI(title="Dynamo AI API")
 
-# Setup CORS (Allows your HTML website to talk to this API)
+# CORS: allow your frontend to call this API
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # Change to ["https://dynamoai.in"] in production for security
+    allow_origins=["*"],  # later you can change to ["https://dynamoai.in"]
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -48,9 +45,10 @@ class Message(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str
-    history: List[Message] = []
+    history: Optional[List[Message]] = None
     use_search: bool = True
-    pdf_context: Optional[str] = None # Text extracted from PDF
+    pdf_context: Optional[str] = None  # Text extracted from PDF
+
 
 # --- ENDPOINTS ---
 
@@ -58,10 +56,11 @@ class ChatRequest(BaseModel):
 def health_check():
     return {"status": "Dynamo Brain is Operational ⚡"}
 
+
 # 1. PDF PARSER
 @app.post("/upload-pdf")
 async def upload_pdf(file: UploadFile = File(...)):
-    """Extracts text from uploaded PDF"""
+    """Extracts text from uploaded PDF."""
     try:
         contents = await file.read()
         pdf_file = io.BytesIO(contents)
@@ -74,53 +73,65 @@ async def upload_pdf(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"PDF Error: {str(e)}")
 
+
 # 2. MAIN CHAT ENGINE
 @app.post("/chat")
 async def chat_endpoint(req: ChatRequest):
-    if not client: raise HTTPException(500, "Server Error: LLM Key Missing")
+    if not client:
+        raise HTTPException(status_code=500, detail="Server Error: LLM Key Missing")
 
     try:
         # A. IMAGE GENERATION TRIGGER
-        if "image" in req.message.lower() and ("generate" in req.message.lower() or "create" in req.message.lower() or "draw" in req.message.lower()):
+        if (
+            "image" in req.message.lower()
+            and (
+                "generate" in req.message.lower()
+                or "create" in req.message.lower()
+                or "draw" in req.message.lower()
+            )
+        ):
             clean = req.message.replace(" ", "%20")
             img_url = f"https://image.pollinations.ai/prompt/{clean}?nologo=true"
             return {"type": "image", "content": img_url}
 
         # B. SEARCH LOGIC
         context = ""
-        # Only search if enabled AND no PDF is active (prioritize document chat)
         if req.use_search and tavily and not req.pdf_context:
             try:
                 print(f"Searching for: {req.message}")
                 res = tavily.search(query=req.message, search_depth="basic")
-                context = "\n".join([r['content'] for r in res.get('results', [])])
+                context = "\n".join(r["content"] for r in res.get("results", []))
             except Exception as e:
                 print(f"Search Error: {e}")
 
-        # C. HISTORY CONTEXT
-        # We use the history sent from the frontend
-        history_messages = []
-        for msg in req.history[-5:]: # Keep last 5 turns
-            history_messages.append({"role": msg.role, "content": msg.content})
+        # C. HISTORY CONTEXT (keep last 5 turns)
+        history_messages: List[dict] = []
+        if req.history:
+            for msg in req.history[-5:]:
+                history_messages.append({"role": msg.role, "content": msg.content})
 
-        # D. PROMPT ENGINEERING
+        # D. SYSTEM PROMPT
         sys_instruction = f"""
         You are Dynamo AI.
         PDF CONTENT: {req.pdf_context if req.pdf_context else "None"}
         WEB CONTEXT: {context}
-        
+
         INSTRUCTIONS:
         - If PDF content is present, answer based on that.
-        - Otherwise, use Web Context.
+        - Otherwise, use Web Context if available.
         - Be helpful, concise, and accurate.
         """
-        
-        # E. INFERENCE
-        messages = [{"role": "system", "content": sys_instruction}] + history_messages + [{"role": "user", "content": req.message}]
-        
+
+        # E. LLM CALL
+        messages = (
+            [{"role": "system", "content": sys_instruction}]
+            + history_messages
+            + [{"role": "user", "content": req.message}]
+        )
+
         response = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
-            messages=messages
+            messages=messages,
         )
         answer = response.choices[0].message.content
 
@@ -129,49 +140,60 @@ async def chat_endpoint(req: ChatRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
 # 3. VOICE TRANSCRIPTION (Whisper)
 @app.post("/transcribe")
 async def transcribe_audio(file: UploadFile = File(...)):
-    if not client: raise HTTPException(500, "Server Error: LLM Key Missing")
+    if not client:
+        raise HTTPException(status_code=500, detail="Server Error: LLM Key Missing")
+
     try:
-        # Save temp file because Groq client needs a file on disk/buffer with name
-        with open("temp_audio.wav", "wb") as buffer:
+        # Save temp file (Groq/OpenAI client wants a file handle)
+        tmp_path = "temp_audio.wav"
+        with open(tmp_path, "wb") as buffer:
             buffer.write(await file.read())
-        
-        with open("temp_audio.wav", "rb") as f:
+
+        with open(tmp_path, "rb") as f:
             transcription = client.audio.transcriptions.create(
-                model="whisper-large-v3-turbo", 
-                file=f, 
-                response_format="text"
+                model="whisper-large-v3-turbo",
+                file=f,
+                response_format="text",
             )
-        
-        # Cleanup
-        os.remove("temp_audio.wav")
+
+        os.remove(tmp_path)
         return {"text": transcription}
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 # 4. VISION (IMAGE ANALYSIS)
 @app.post("/vision")
 async def vision_analysis(message: str = Form(...), file: UploadFile = File(...)):
-    if not client: raise HTTPException(500, "Server Error: LLM Key Missing")
+    if not client:
+        raise HTTPException(status_code=500, detail="Server Error: LLM Key Missing")
 
     try:
-        # Read and Encode Image
         contents = await file.read()
-        base64_image = base64.b64encode(contents).decode('utf-8')
+        base64_image = base64.b64encode(contents).decode("utf-8")
         mime_type = file.content_type or "image/jpeg"
-        
-        # Call Vision Model
+
         response = client.chat.completions.create(
-            model="llama-3.2-11b-vision-preview", # Updated to active model
-            messages=[{
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": message},
-                    {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{base64_image}"}}
-                ]
-            }]
+            model="llama-3.2-11b-vision-preview",
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": message},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:{mime_type};base64,{base64_image}"
+                            },
+                        },
+                    ],
+                }
+            ],
         )
         return {"type": "text", "content": response.choices[0].message.content}
 
