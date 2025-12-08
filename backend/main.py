@@ -9,174 +9,212 @@ import base64
 import os
 import io
 
-# --- CONFIGURATION ---
+# ----------------------------------------
+# CONFIG
+# ----------------------------------------
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
 
 app = FastAPI(title="Dynamo AI API")
 
-# CORS: allow your frontend to call this API
+# Allow frontend access
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # later you can change to ["https://dynamoai.in"]
+    allow_origins=["*"],   # In production you can restrict this
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# --- CLIENT INITIALIZATION ---
+# LLM Client (Groq API - OpenAI compatible)
 client = None
-tavily = None
-
 if GROQ_API_KEY:
     client = OpenAI(api_key=GROQ_API_KEY, base_url="https://api.groq.com/openai/v1")
 else:
-    print("⚠️ WARNING: GROQ_API_KEY not found.")
+    print("⚠️ WARNING: GROQ_API_KEY missing!")
 
+# Tavily Search
+tavily = None
 if TAVILY_API_KEY:
     tavily = TavilyClient(api_key=TAVILY_API_KEY)
 else:
-    print("⚠️ WARNING: TAVILY_API_KEY not found.")
+    print("⚠️ WARNING: TAVILY_API_KEY missing!")
 
-# --- DATA MODELS ---
+
+# ----------------------------------------
+# DATA MODELS
+# ----------------------------------------
 class Message(BaseModel):
     role: str
     content: str
 
 class ChatRequest(BaseModel):
     message: str
-    history: Optional[List[Message]] = None
+    history: List[Message] = []
     use_search: bool = True
-    pdf_context: Optional[str] = None  # Text extracted from PDF
+    pdf_context: Optional[str] = None
+    deep_dive: bool = False   # ⭐ frontend uses this
 
 
-# --- ENDPOINTS ---
-
+# ----------------------------------------
+# HEALTH CHECK
+# ----------------------------------------
 @app.get("/")
-def health_check():
+def root():
     return {"status": "Dynamo Brain is Operational ⚡"}
 
 
-# 1. PDF PARSER
+# ----------------------------------------
+# PDF UPLOAD → TEXT EXTRACTION
+# ----------------------------------------
 @app.post("/upload-pdf")
 async def upload_pdf(file: UploadFile = File(...)):
-    """Extracts text from uploaded PDF."""
     try:
         contents = await file.read()
-        pdf_file = io.BytesIO(contents)
-        reader = PyPDF2.PdfReader(pdf_file)
+        pdf = io.BytesIO(contents)
+        reader = PyPDF2.PdfReader(pdf)
+
         text = ""
-        # Limit to first 10 pages to prevent token overflow
-        for page in reader.pages[:10]:
+        for page in reader.pages[:10]:      # limit to 10 pages
             text += page.extract_text() or ""
+
         return {"text": text, "filename": file.filename}
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"PDF Error: {str(e)}")
+        raise HTTPException(500, f"PDF Error: {str(e)}")
 
 
-# 2. MAIN CHAT ENGINE
+# ----------------------------------------
+# MAIN CHAT ENGINE
+# ----------------------------------------
 @app.post("/chat")
 async def chat_endpoint(req: ChatRequest):
+
     if not client:
-        raise HTTPException(status_code=500, detail="Server Error: LLM Key Missing")
+        raise HTTPException(500, "Server error: LLM key missing.")
 
     try:
-        # A. IMAGE GENERATION TRIGGER
+        # -------------------------------
+        # IMAGE GENERATION TRIGGER
+        # -------------------------------
         if (
-            "image" in req.message.lower()
-            and (
-                "generate" in req.message.lower()
-                or "create" in req.message.lower()
-                or "draw" in req.message.lower()
-            )
+            "image" in req.message.lower() and
+            any(x in req.message.lower() for x in ["generate", "create", "draw", "make"])
         ):
-            clean = req.message.replace(" ", "%20")
-            img_url = f"https://image.pollinations.ai/prompt/{clean}?nologo=true"
-            return {"type": "image", "content": img_url}
+            safe = req.message.replace(" ", "%20")
+            url = f"https://image.pollinations.ai/prompt/{safe}?nologo=true"
+            return {"type": "image", "content": url}
 
-        # B. SEARCH LOGIC
-        context = ""
+        # -------------------------------
+        # CONTEXT BUILDING
+        # -------------------------------
+        web_context = ""
+
+        # Tavily Search (only if enabled & no PDF context)
         if req.use_search and tavily and not req.pdf_context:
             try:
-                print(f"Searching for: {req.message}")
-                res = tavily.search(query=req.message, search_depth="basic")
-                context = "\n".join(r["content"] for r in res.get("results", []))
+                result = tavily.search(query=req.message, search_depth="basic")
+                web_context = "\n".join(
+                    [item["content"] for item in result.get("results", [])]
+                )
             except Exception as e:
-                print(f"Search Error: {e}")
+                print("Search Error:", e)
 
-        # C. HISTORY CONTEXT (keep last 5 turns)
-        history_messages: List[dict] = []
-        if req.history:
-            for msg in req.history[-5:]:
-                history_messages.append({"role": msg.role, "content": msg.content})
+        # Last 5 messages from history
+        history_msgs = [
+            {"role": m.role, "content": m.content}
+            for m in req.history[-5:]
+        ]
 
-        # D. SYSTEM PROMPT
+        # Deep dive mode
+        detail = (
+            "Reply concisely and clearly."
+            if not req.deep_dive
+            else "Give a deep, detailed analysis with step-by-step reasoning and examples."
+        )
+
+        # System prompt
         sys_instruction = f"""
-        You are Dynamo AI.
-        PDF CONTENT: {req.pdf_context if req.pdf_context else "None"}
-        WEB CONTEXT: {context}
+You are Dynamo AI.
 
-        INSTRUCTIONS:
-        - If PDF content is present, answer based on that.
-        - Otherwise, use Web Context if available.
-        - Be helpful, concise, and accurate.
-        """
+PDF CONTENT:
+{req.pdf_context or "None"}
 
-        # E. LLM CALL
+WEB CONTEXT:
+{web_context or "None"}
+
+INSTRUCTIONS:
+- If PDF content is present, prioritize it.
+- Otherwise use Web Context if available.
+- {detail}
+- Do NOT hallucinate.
+- Keep answers accurate and organized.
+"""
+
         messages = (
             [{"role": "system", "content": sys_instruction}]
-            + history_messages
+            + history_msgs
             + [{"role": "user", "content": req.message}]
         )
 
+        # -------------------------------
+        # LLM CALL
+        # -------------------------------
         response = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
-            messages=messages,
+            messages=messages
         )
+
         answer = response.choices[0].message.content
 
         return {"type": "text", "content": answer}
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(500, f"Chat Error: {str(e)}")
 
 
-# 3. VOICE TRANSCRIPTION (Whisper)
+# ----------------------------------------
+# AUDIO → TEXT (Whisper)
+# ----------------------------------------
 @app.post("/transcribe")
 async def transcribe_audio(file: UploadFile = File(...)):
     if not client:
-        raise HTTPException(status_code=500, detail="Server Error: LLM Key Missing")
-
-    try:
-        # Save temp file (Groq/OpenAI client wants a file handle)
-        tmp_path = "temp_audio.wav"
-        with open(tmp_path, "wb") as buffer:
-            buffer.write(await file.read())
-
-        with open(tmp_path, "rb") as f:
-            transcription = client.audio.transcriptions.create(
-                model="whisper-large-v3-turbo",
-                file=f,
-                response_format="text",
-            )
-
-        os.remove(tmp_path)
-        return {"text": transcription}
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# 4. VISION (IMAGE ANALYSIS)
-@app.post("/vision")
-async def vision_analysis(message: str = Form(...), file: UploadFile = File(...)):
-    if not client:
-        raise HTTPException(status_code=500, detail="Server Error: LLM Key Missing")
+        raise HTTPException(500, "LLM key missing.")
 
     try:
         contents = await file.read()
-        base64_image = base64.b64encode(contents).decode("utf-8")
-        mime_type = file.content_type or "image/jpeg"
+
+        with open("temp_audio.wav", "wb") as f:
+            f.write(contents)
+
+        with open("temp_audio.wav", "rb") as f:
+            text = client.audio.transcriptions.create(
+                model="whisper-large-v3-turbo",
+                file=f,
+                response_format="text"
+            )
+
+        os.remove("temp_audio.wav")
+
+        return {"text": text}
+
+    except Exception as e:
+        raise HTTPException(500, f"Audio Error: {str(e)}")
+
+
+# ----------------------------------------
+# IMAGE → ANALYSIS (Vision Model)
+# ----------------------------------------
+@app.post("/vision")
+async def vision(message: str = Form(...), file: UploadFile = File(...)):
+
+    if not client:
+        raise HTTPException(500, "LLM key missing.")
+
+    try:
+        file_bytes = await file.read()
+        b64 = base64.b64encode(file_bytes).decode("utf-8")
+        mime = file.content_type or "image/jpeg"
 
         response = client.chat.completions.create(
             model="llama-3.2-11b-vision-preview",
@@ -187,15 +225,15 @@ async def vision_analysis(message: str = Form(...), file: UploadFile = File(...)
                         {"type": "text", "text": message},
                         {
                             "type": "image_url",
-                            "image_url": {
-                                "url": f"data:{mime_type};base64,{base64_image}"
-                            },
-                        },
-                    ],
+                            "image_url": {"url": f"data:{mime};base64,{b64}"}
+                        }
+                    ]
                 }
-            ],
+            ]
         )
-        return {"type": "text", "content": response.choices[0].message.content}
+
+        output = response.choices[0].message.content
+        return {"type": "text", "content": output}
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(500, f"Vision Error: {str(e)}")
