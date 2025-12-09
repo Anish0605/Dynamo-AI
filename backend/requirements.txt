@@ -6,3 +6,7 @@ python-multipart
 PyPDF2
 pandas
 requests
+supabase-py
+firebase-admin
+google-auth
+razorpay
