@@ -6,7 +6,7 @@ python-multipart
 PyPDF2
 pandas
 requests
-supabase==1.0.0
+supabase
 firebase-admin
 google-auth
 razorpay
