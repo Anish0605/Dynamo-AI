@@ -63,7 +63,7 @@ class ChatRequest(BaseModel):
 
 class OrderRequest(BaseModel):
     amount_inr: int
-    email: str # NEW: We require email to create an order
+    email: str # <--- CRITICAL: Receive Email from Frontend
 
 # --- ENDPOINTS ---
 
@@ -71,24 +71,25 @@ class OrderRequest(BaseModel):
 def health_check():
     return {"status": "Dynamo Brain is Operational ⚡"}
 
-# 1. CREATE PAYMENT ORDER (FIXED: Stores Email in Notes)
+# 1. CREATE PAYMENT ORDER (Fixed to save Email)
 @app.post("/create-razorpay-order")
 async def create_order(req: OrderRequest):
     if not razorpay_client:
         raise HTTPException(500, "Payment gateway not configured")
     try:
+        # Create Order with Notes (This saves the email in Razorpay system)
         data = { 
             "amount": req.amount_inr * 100, 
             "currency": "INR", 
             "payment_capture": 1,
-            "notes": { "user_email": req.email } # THIS FIXES THE MISSING EMAIL ISSUE
+            "notes": { "user_email": req.email } # <--- SAVES EMAIL
         }
         order = razorpay_client.order.create(data=data)
         return { "order_id": order['id'], "amount": order['amount'], "key_id": RAZORPAY_KEY_ID }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# 2. WEBHOOK (FIXED: Reads Email from Notes)
+# 2. WEBHOOK (Updates Supabase)
 @app.post("/razorpay/webhook")
 async def razorpay_webhook(request: Request):
     if not supabase: return {"status": "error", "message": "DB config missing"}
@@ -98,21 +99,25 @@ async def razorpay_webhook(request: Request):
         razorpay_client.utility.verify_webhook_signature(body.decode('utf-8'), signature, RAZORPAY_WEBHOOK_SECRET)
 
         event = await request.json()
+        
         if event['event'] == 'payment.captured':
             payment = event['payload']['payment']['entity']
-            # Try getting email from Notes first (Reliable), then fallback to Payment Entity
+            
+            # Retrieve email from notes (where we saved it) or standard email field
             notes = payment.get('notes', {})
             user_email = notes.get('user_email') or payment.get('email')
             
             if user_email:
                 print(f"💰 Upgrading plan for {user_email}")
-                supabase.table("users").update({"plan": "plus"}).eq("email", user_email).execute()
+                # UPDATE SUPABASE
+                response = supabase.table("users").update({"plan": "plus"}).eq("email", user_email).execute()
+                print("Update Result:", response)
             else:
-                print("⚠️ Payment received but no email found.")
+                print("⚠️ Payment received but No Email found in data.")
                 
         return {"status": "ok"}
     except Exception as e:
-        print(f"Webhook Error: {e}")
+        print(f"Webhook Error: {str(e)}")
         raise HTTPException(500, str(e))
 
 # 3. PDF PARSER
