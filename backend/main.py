@@ -63,6 +63,7 @@ class ChatRequest(BaseModel):
 
 class OrderRequest(BaseModel):
     amount_inr: int
+    email: str # NEW: We require email to create an order
 
 # --- ENDPOINTS ---
 
@@ -70,19 +71,24 @@ class OrderRequest(BaseModel):
 def health_check():
     return {"status": "Dynamo Brain is Operational ⚡"}
 
-# 1. CREATE PAYMENT ORDER
+# 1. CREATE PAYMENT ORDER (FIXED: Stores Email in Notes)
 @app.post("/create-razorpay-order")
 async def create_order(req: OrderRequest):
     if not razorpay_client:
         raise HTTPException(500, "Payment gateway not configured")
     try:
-        data = { "amount": req.amount_inr * 100, "currency": "INR", "payment_capture": 1 }
+        data = { 
+            "amount": req.amount_inr * 100, 
+            "currency": "INR", 
+            "payment_capture": 1,
+            "notes": { "user_email": req.email } # THIS FIXES THE MISSING EMAIL ISSUE
+        }
         order = razorpay_client.order.create(data=data)
         return { "order_id": order['id'], "amount": order['amount'], "key_id": RAZORPAY_KEY_ID }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# 2. WEBHOOK (UPGRADE USER)
+# 2. WEBHOOK (FIXED: Reads Email from Notes)
 @app.post("/razorpay/webhook")
 async def razorpay_webhook(request: Request):
     if not supabase: return {"status": "error", "message": "DB config missing"}
@@ -94,12 +100,19 @@ async def razorpay_webhook(request: Request):
         event = await request.json()
         if event['event'] == 'payment.captured':
             payment = event['payload']['payment']['entity']
-            user_email = payment.get('email')
+            # Try getting email from Notes first (Reliable), then fallback to Payment Entity
+            notes = payment.get('notes', {})
+            user_email = notes.get('user_email') or payment.get('email')
+            
             if user_email:
                 print(f"💰 Upgrading plan for {user_email}")
                 supabase.table("users").update({"plan": "plus"}).eq("email", user_email).execute()
+            else:
+                print("⚠️ Payment received but no email found.")
+                
         return {"status": "ok"}
     except Exception as e:
+        print(f"Webhook Error: {e}")
         raise HTTPException(500, str(e))
 
 # 3. PDF PARSER
