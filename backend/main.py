@@ -1,5 +1,6 @@
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import List, Optional
 from openai import OpenAI
@@ -12,11 +13,17 @@ import razorpay
 import json
 from supabase import create_client, Client
 
+# PDF Generation Imports
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
+from reportlab.lib import colors
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet
+
 # --- CONFIGURATION ---
 GROQ_API_KEY = os.getenv("GROQ_API_KEY") 
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
 
-# RAZORPAY & SUPABASE KEYS
 RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID")
 RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET")
 RAZORPAY_WEBHOOK_SECRET = os.getenv("RAZORPAY_WEBHOOK_SECRET")
@@ -60,10 +67,14 @@ class ChatRequest(BaseModel):
     use_search: bool = True
     pdf_context: Optional[str] = None 
     deep_dive: bool = False
+    model: str = "llama-3.3-70b-versatile" # Default Model
 
 class OrderRequest(BaseModel):
     amount_inr: int
-    email: str # <--- CRITICAL: Receive Email from Frontend
+    email: str
+
+class ReportRequest(BaseModel):
+    history: List[Message]
 
 # --- ENDPOINTS ---
 
@@ -71,99 +82,43 @@ class OrderRequest(BaseModel):
 def health_check():
     return {"status": "Dynamo Brain is Operational ⚡"}
 
-# 1. CREATE PAYMENT ORDER (Fixed to save Email)
-@app.post("/create-razorpay-order")
-async def create_order(req: OrderRequest):
-    if not razorpay_client:
-        raise HTTPException(500, "Payment gateway not configured")
-    try:
-        # Create Order with Notes (This saves the email in Razorpay system)
-        data = { 
-            "amount": req.amount_inr * 100, 
-            "currency": "INR", 
-            "payment_capture": 1,
-            "notes": { "user_email": req.email } # <--- SAVES EMAIL
-        }
-        order = razorpay_client.order.create(data=data)
-        return { "order_id": order['id'], "amount": order['amount'], "key_id": RAZORPAY_KEY_ID }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+# 1. GENERATE PDF REPORT (NEW)
+@app.post("/generate-report")
+async def generate_report(req: ReportRequest):
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter)
+    styles = getSampleStyleSheet()
+    story = []
 
-# 2. WEBHOOK (Updates Supabase)
-@app.post("/razorpay/webhook")
-async def razorpay_webhook(request: Request):
-    if not supabase: return {"status": "error", "message": "DB config missing"}
-    try:
-        body = await request.body()
-        signature = request.headers.get('X-Razorpay-Signature')
-        razorpay_client.utility.verify_webhook_signature(body.decode('utf-8'), signature, RAZORPAY_WEBHOOK_SECRET)
+    # Title
+    story.append(Paragraph("Dynamo AI Research Report", styles['Title']))
+    story.append(Spacer(1, 12))
 
-        event = await request.json()
+    # Content
+    for msg in req.history:
+        role_style = styles['Heading3'] if msg.role == 'user' else styles['Heading4']
+        role_name = "User Query" if msg.role == 'user' else "Dynamo Insight"
+        color = colors.black if msg.role == 'user' else colors.darkblue
         
-        if event['event'] == 'payment.captured':
-            payment = event['payload']['payment']['entity']
-            
-            # Retrieve email from notes (where we saved it) or standard email field
-            notes = payment.get('notes', {})
-            user_email = notes.get('user_email') or payment.get('email')
-            
-            if user_email:
-                print(f"💰 Upgrading plan for {user_email}")
-                # UPDATE SUPABASE
-                response = supabase.table("users").update({"plan": "plus"}).eq("email", user_email).execute()
-                print("Update Result:", response)
-            else:
-                print("⚠️ Payment received but No Email found in data.")
-                
-        return {"status": "ok"}
-    except Exception as e:
-        print(f"Webhook Error: {str(e)}")
-        raise HTTPException(500, str(e))
+        # Header
+        story.append(Paragraph(f"<b>{role_name}:</b>", role_style))
+        story.append(Spacer(1, 4))
+        
+        # Body (Handle simple markdown bolding replacement for PDF)
+        clean_content = msg.content.replace("**", "<b>").replace("**", "</b>").replace("\n", "<br/>")
+        story.append(Paragraph(clean_content, styles['BodyText']))
+        story.append(Spacer(1, 12))
 
-# 3. PDF PARSER
-@app.post("/upload-pdf")
-async def upload_pdf(file: UploadFile = File(...)):
-    try:
-        contents = await file.read()
-        pdf_file = io.BytesIO(contents)
-        reader = PyPDF2.PdfReader(pdf_file)
-        text = ""
-        for page in reader.pages[:10]:
-            text += page.extract_text() or ""
-        return {"text": text, "filename": file.filename}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    doc.build(story)
+    buffer.seek(0)
+    
+    return StreamingResponse(
+        buffer, 
+        media_type="application/pdf", 
+        headers={"Content-Disposition": "attachment; filename=research_report.pdf"}
+    )
 
-# 4. VISION
-@app.post("/vision")
-async def vision_analysis(message: str = Form(...), file: UploadFile = File(...)):
-    if not client: raise HTTPException(500, "Server Error: LLM Key Missing")
-    try:
-        contents = await file.read()
-        base64_image = base64.b64encode(contents).decode('utf-8')
-        mime_type = file.content_type or "image/jpeg"
-        response = client.chat.completions.create(
-            model="llama-3.2-11b-vision-preview",
-            messages=[{"role": "user", "content": [{"type": "text", "text": message}, {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{base64_image}"}}]}]
-        )
-        return {"type": "text", "content": response.choices[0].message.content}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-# 5. TRANSCRIBE
-@app.post("/transcribe")
-async def transcribe_audio(file: UploadFile = File(...)):
-    if not client: raise HTTPException(500, "Server Error: LLM Key Missing")
-    try:
-        with open("temp_audio.wav", "wb") as buffer: buffer.write(await file.read())
-        with open("temp_audio.wav", "rb") as f:
-            transcription = client.audio.transcriptions.create(model="whisper-large-v3-turbo", file=f, response_format="text")
-        os.remove("temp_audio.wav")
-        return {"text": transcription}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-# 6. CHAT
+# 2. CHAT (Updated for Model Selection)
 @app.post("/chat")
 async def chat_endpoint(req: ChatRequest):
     if not client: raise HTTPException(500, "Server Error: LLM Key Missing")
@@ -184,7 +139,64 @@ async def chat_endpoint(req: ChatRequest):
         for msg in req.history[-5:]: messages.append({"role": msg.role, "content": msg.content})
         messages.append({"role": "user", "content": req.message})
         
-        response = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=messages)
+        # Use the requested model
+        response = client.chat.completions.create(model=req.model, messages=messages)
         return {"type": "text", "content": response.choices[0].message.content}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# 3. PAYMENTS & OTHER UTILS (Kept Same)
+@app.post("/create-razorpay-order")
+async def create_order(req: OrderRequest):
+    if not razorpay_client: raise HTTPException(500, "Payment gateway not configured")
+    try:
+        data = { "amount": req.amount_inr * 100, "currency": "INR", "payment_capture": 1, "notes": { "user_email": req.email } }
+        order = razorpay_client.order.create(data=data)
+        return { "order_id": order['id'], "amount": order['amount'], "key_id": RAZORPAY_KEY_ID }
+    except Exception as e: raise HTTPException(500, detail=str(e))
+
+@app.post("/razorpay/webhook")
+async def razorpay_webhook(request: Request):
+    if not supabase: return {"status": "error"}
+    try:
+        body = await request.body()
+        signature = request.headers.get('X-Razorpay-Signature')
+        razorpay_client.utility.verify_webhook_signature(body.decode('utf-8'), signature, RAZORPAY_WEBHOOK_SECRET)
+        event = await request.json()
+        if event['event'] == 'payment.captured':
+            payment = event['payload']['payment']['entity']
+            user_email = payment.get('notes', {}).get('user_email') or payment.get('email')
+            if user_email: supabase.table("users").update({"plan": "plus"}).eq("email", user_email).execute()
+        return {"status": "ok"}
+    except Exception: raise HTTPException(500, "Webhook Error")
+
+@app.post("/upload-pdf")
+async def upload_pdf(file: UploadFile = File(...)):
+    try:
+        contents = await file.read()
+        reader = PyPDF2.PdfReader(io.BytesIO(contents))
+        text = "".join([page.extract_text() or "" for page in reader.pages[:10]])
+        return {"text": text, "filename": file.filename}
+    except Exception as e: raise HTTPException(500, detail=str(e))
+
+@app.post("/vision")
+async def vision_analysis(message: str = Form(...), file: UploadFile = File(...)):
+    if not client: raise HTTPException(500, "LLM Key Missing")
+    try:
+        encoded = base64.b64encode(await file.read()).decode('utf-8')
+        response = client.chat.completions.create(
+            model="llama-3.2-11b-vision-preview",
+            messages=[{"role": "user", "content": [{"type": "text", "text": message}, {"type": "image_url", "image_url": {"url": f"data:{file.content_type};base64,{encoded}"}}]}]
+        )
+        return {"type": "text", "content": response.choices[0].message.content}
+    except Exception as e: raise HTTPException(500, detail=str(e))
+
+@app.post("/transcribe")
+async def transcribe_audio(file: UploadFile = File(...)):
+    if not client: raise HTTPException(500, "LLM Key Missing")
+    try:
+        with open("temp.wav", "wb") as b: b.write(await file.read())
+        with open("temp.wav", "rb") as f: tx = client.audio.transcriptions.create(model="whisper-large-v3-turbo", file=f, response_format="text")
+        os.remove("temp.wav")
+        return {"text": tx}
+    except Exception as e: raise HTTPException(500, detail=str(e))
