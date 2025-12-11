@@ -10,3 +10,4 @@ supabase
 firebase-admin
 google-auth
 razorpay
+reportlab
