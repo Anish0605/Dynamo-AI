@@ -1,1 +1,13 @@
-
+fastapi
+uvicorn[standard]
+openai
+tavily-python
+python-multipart
+PyPDF2
+pandas
+requests
+supabase
+firebase-admin
+google-auth
+razorpay
+reportlab
