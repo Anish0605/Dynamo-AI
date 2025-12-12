@@ -1,4 +1,3 @@
-kkks
 fastapi
 uvicorn[standard]
 openai
