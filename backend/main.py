@@ -1,4 +1,3 @@
-from 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -14,7 +13,7 @@ import razorpay
 import json
 from supabase import create_client, Client
 
-# PDF Generation Imports
+# PDF Report Generation Imports
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 from reportlab.lib import colors
@@ -194,7 +193,7 @@ async def vision(message: str = Form(...), file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(500, str(e))
 
-# 7. TRANSCRIBE (Fixed Syntax Error)
+# 7. TRANSCRIBE (Fixed Indentation)
 @app.post("/transcribe")
 async def transcribe(file: UploadFile = File(...)):
     if not client:
