@@ -13,7 +13,7 @@ import razorpay
 import json
 from supabase import create_client, Client
 
-# PDF Generation
+# PDF Generation Imports
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 from reportlab.lib import colors
