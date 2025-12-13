@@ -1,26 +1,38 @@
+import os
+import io
+import base64
+import json
+from typing import List, Optional
+
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from typing import List, Optional
+
+# --- NEW BRAIN: Google Gemini ---
+import google.generativeai as genai
+from google.generativeai.types import HarmCategory, HarmBlockThreshold
+
+# --- AUDIO ENGINE: Groq (via OpenAI client) ---
 from openai import OpenAI
+
+# --- UTILS ---
 from tavily import TavilyClient
 import PyPDF2
-import base64
-import os
-import io
 import razorpay
-import json
 from supabase import create_client, Client
 
-# PDF Generation
+# PDF Report Generation
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 from reportlab.lib import colors
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
 
-# --- CONFIGURATION ---
+# ==========================================
+# 1. CONFIGURATION & KEYS
+# ==========================================
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY") 
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
 
@@ -31,33 +43,52 @@ RAZORPAY_WEBHOOK_SECRET = os.getenv("RAZORPAY_WEBHOOK_SECRET")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
-app = FastAPI(title="Dynamo AI API")
+# ==========================================
+# 2. CLIENT INITIALIZATION
+# ==========================================
+
+# A. Setup Gemini (The Brain & Eyes)
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
+    safety_settings = {
+        HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_ONLY_HIGH,
+        HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_ONLY_HIGH,
+        HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_ONLY_HIGH,
+        HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_ONLY_HIGH,
+    }
+    # UPGRADE: Using Gemini 2.0 Flash (Advanced & Free Tier available)
+    gemini_model = genai.GenerativeModel(
+        model_name="gemini-2.0-flash", 
+        safety_settings=safety_settings
+    )
+else:
+    gemini_model = None
+    print("WARNING: GEMINI_API_KEY is missing. Chat and Vision will fail.")
+
+# B. Setup Groq (The Ears - Audio Transcription)
+groq_client = None
+if GROQ_API_KEY:
+    groq_client = OpenAI(api_key=GROQ_API_KEY, base_url="https://api.groq.com/openai/v1")
+
+# C. Setup Tools
+tavily = TavilyClient(api_key=TAVILY_API_KEY) if TAVILY_API_KEY else None
+razorpay_client = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET)) if RAZORPAY_KEY_ID else None
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY) if SUPABASE_URL else None
+
+# ==========================================
+# 3. FASTAPI APP SETUP
+# ==========================================
+app = FastAPI(title="Dynamo AI - Gemini 2.0 Powered")
 
 app.add_middleware(
     CORSMiddleware,
-    # Allow all origins for maximum compatibility
     allow_origins=["*"], 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# --- CLIENTS ---
-client = None
-tavily = None
-razorpay_client = None
-supabase: Client = None
-
-if GROQ_API_KEY:
-    client = OpenAI(api_key=GROQ_API_KEY, base_url="https://api.groq.com/openai/v1")
-if TAVILY_API_KEY:
-    tavily = TavilyClient(api_key=TAVILY_API_KEY)
-if RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET:
-    razorpay_client = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
-if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY:
-    supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
-
-# --- MODELS ---
+# --- DATA MODELS ---
 class Message(BaseModel):
     role: str
     content: str
@@ -68,7 +99,7 @@ class ChatRequest(BaseModel):
     use_search: bool = True
     pdf_context: Optional[str] = None 
     deep_dive: bool = False
-    model: str = "llama-3.3-70b-versatile"
+    model: str = "gemini-2.0-flash" 
 
 class OrderRequest(BaseModel):
     amount_inr: int
@@ -77,176 +108,145 @@ class OrderRequest(BaseModel):
 class ReportRequest(BaseModel):
     history: List[Message]
 
-# --- ENDPOINTS ---
+# ==========================================
+# 4. ENDPOINTS
+# ==========================================
 
 @app.get("/")
 def health_check():
-    return {"status": "Dynamo Brain is Operational ⚡"}
+    return {"status": "Dynamo Brain (Gemini 2.0 Flash) is Active 🧠"}
 
-# 1. CREATE PAYMENT
+# --- CHAT ENDPOINT ---
+@app.post("/chat")
+async def chat_endpoint(req: ChatRequest):
+    if not gemini_model:
+        raise HTTPException(500, "Gemini API Key Missing")
+    
+    try:
+        # 1. Handle Image Generation commands
+        if "image" in req.message.lower() and ("generate" in req.message.lower() or "create" in req.message.lower()):
+            clean = req.message.replace(" ", "%20")
+            return {"type": "image", "content": f"https://image.pollinations.ai/prompt/{clean}?nologo=true"}
+
+        # 2. Build Context
+        context_str = ""
+        if req.use_search and tavily and not req.pdf_context:
+            try:
+                print("Searching web...")
+                search_result = tavily.search(query=req.message, search_depth="advanced" if req.deep_dive else "basic")
+                context_str += f"\n\n[WEB SEARCH RESULTS]:\n{search_result.get('results', [])}\n"
+            except Exception as e:
+                print(f"Search failed: {e}")
+
+        if req.pdf_context:
+            context_str += f"\n\n[USER UPLOADED DOCUMENT CONTEXT]:\n{req.pdf_context}\n"
+
+        # 3. Prompt Construction
+        full_prompt = "You are Dynamo AI, a helpful research assistant.\n"
+        full_prompt += context_str + "\n"
+        
+        for msg in req.history[-6:]:
+            role_label = "User" if msg.role == "user" else "Model"
+            full_prompt += f"{role_label}: {msg.content}\n"
+        
+        full_prompt += f"User: {req.message}\nModel:"
+
+        # 4. Generate Response
+        response = gemini_model.generate_content(full_prompt)
+        
+        return {"type": "text", "content": response.text}
+
+    except Exception as e:
+        print(f"Gemini Chat Error: {e}")
+        # Fallback error message
+        return {"type": "text", "content": "I encountered an error processing that request. Please try again."}
+
+# --- VISION ENDPOINT (Gemini 2.0 - Stable & Free) ---
+@app.post("/vision")
+async def vision(message: str = Form(...), file: UploadFile = File(...)):
+    if not gemini_model:
+        raise HTTPException(500, "Gemini API Key Missing")
+    
+    try:
+        print(f"Gemini Vision analyzing: {file.filename}")
+        
+        image_bytes = await file.read()
+        
+        # Helper to determine mime type
+        mime_type = file.content_type if file.content_type else "image/jpeg"
+        
+        image_part = {
+            "mime_type": mime_type,
+            "data": image_bytes
+        }
+
+        # Gemini 2.0 handles text + image natively
+        response = gemini_model.generate_content([message, image_part])
+        
+        return {"type": "text", "content": response.text}
+
+    except Exception as e:
+        print(f"Gemini Vision Error: {e}")
+        raise HTTPException(500, f"Vision Failed: {str(e)}")
+
+# --- AUDIO ENDPOINT (Groq - Best for Transcription) ---
+@app.post("/transcribe")
+async def transcribe(file: UploadFile = File(...)):
+    if not groq_client:
+        raise HTTPException(500, "Groq API Key Missing (needed for Whisper)")
+    try:
+        filename = "temp_audio.wav"
+        with open(filename, "wb") as f:
+            f.write(await file.read())
+        
+        # Whisper Large V3 via Groq (Fastest)
+        with open(filename, "rb") as f:
+            transcription = groq_client.audio.transcriptions.create(
+                file=(filename, f.read()),
+                model="whisper-large-v3-turbo",
+                response_format="text"
+            )
+        
+        return {"text": transcription}
+    except Exception as e:
+        print(f"Transcribe Error: {e}")
+        raise HTTPException(500, str(e))
+
+# --- UTILS ---
+@app.post("/upload-pdf")
+async def upload_pdf(file: UploadFile = File(...)):
+    try:
+        contents = await file.read()
+        reader = PyPDF2.PdfReader(io.BytesIO(contents))
+        text = ""
+        for i, page in enumerate(reader.pages):
+            if i > 20: break
+            text += page.extract_text() or ""
+        return {"text": text}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
 @app.post("/create-razorpay-order")
 async def create_order(req: OrderRequest):
     if not razorpay_client:
         raise HTTPException(500, "Payment gateway not configured")
     try:
-        data = { 
-            "amount": req.amount_inr * 100, 
-            "currency": "INR", 
-            "payment_capture": 1,
-            "notes": { "user_email": req.email }
-        }
+        data = { "amount": req.amount_inr * 100, "currency": "INR", "payment_capture": 1, "notes": { "user_email": req.email } }
         order = razorpay_client.order.create(data=data)
         return { "order_id": order['id'], "amount": order['amount'], "key_id": RAZORPAY_KEY_ID }
     except Exception as e:
         raise HTTPException(500, str(e))
 
-# 2. WEBHOOK
-@app.post("/razorpay/webhook")
-async def razorpay_webhook(request: Request):
-    if not supabase:
-        return {"status": "error"}
-    try:
-        body = await request.body()
-        signature = request.headers.get('X-Razorpay-Signature')
-        razorpay_client.utility.verify_webhook_signature(body.decode('utf-8'), signature, RAZORPAY_WEBHOOK_SECRET)
-        event = await request.json()
-        if event['event'] == 'payment.captured':
-            payment = event['payload']['payment']['entity']
-            email = payment.get('notes', {}).get('user_email') or payment.get('email')
-            if email:
-                supabase.table("users").update({"plan": "plus"}).eq("email", email).execute()
-        return {"status": "ok"}
-    except Exception:
-        raise HTTPException(500, "Webhook Error")
-
-# 3. PDF REPORT
 @app.post("/generate-report")
 async def generate_report(req: ReportRequest):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter)
     styles = getSampleStyleSheet()
     story = [Paragraph("Dynamo AI Research Report", styles['Title']), Spacer(1, 12)]
-    
     for msg in req.history:
-        role = "User Query" if msg.role == 'user' else "Dynamo Insight"
-        style = styles['Heading3'] if msg.role == 'user' else styles['Heading4']
-        story.append(Paragraph(f"<b>{role}:</b>", style))
-        content = msg.content.replace("**", "").replace("\n", "<br/>")
-        story.append(Paragraph(content, styles['BodyText']))
+        role = "User" if msg.role == 'user' else "Dynamo AI"
+        story.append(Paragraph(f"<b>{role}:</b> {msg.content}", styles['BodyText']))
         story.append(Spacer(1, 12))
-
     doc.build(story)
     buffer.seek(0)
     return StreamingResponse(buffer, media_type="application/pdf", headers={"Content-Disposition": "attachment; filename=report.pdf"})
-
-# 4. CHAT
-@app.post("/chat")
-async def chat_endpoint(req: ChatRequest):
-    if not client:
-        raise HTTPException(500, "LLM Key Missing")
-    try:
-        if "image" in req.message.lower() and ("generate" in req.message.lower() or "create" in req.message.lower()):
-            clean = req.message.replace(" ", "%20")
-            return {"type": "image", "content": f"https://image.pollinations.ai/prompt/{clean}?nologo=true"}
-
-        context = ""
-        if req.use_search and tavily and not req.pdf_context:
-            try:
-                res = tavily.search(query=req.message, search_depth="advanced" if req.deep_dive else "basic")
-                context = "\n".join([r['content'] for r in res.get('results', [])])
-            except:
-                pass
-
-        sys_instruction = f"You are Dynamo AI. PDF: {req.pdf_context or 'None'} WEB: {context}"
-        messages = [{"role": "system", "content": sys_instruction}]
-        for msg in req.history[-5:]:
-            messages.append({"role": msg.role, "content": msg.content})
-        messages.append({"role": "user", "content": req.message})
-        
-        response = client.chat.completions.create(model=req.model, messages=messages)
-        return {"type": "text", "content": response.choices[0].message.content}
-    except Exception as e:
-        raise HTTPException(500, str(e))
-
-# 5. UPLOAD PDF
-@app.post("/upload-pdf")
-async def upload_pdf(file: UploadFile = File(...)):
-    try:
-        contents = await file.read()
-        reader = PyPDF2.PdfReader(io.BytesIO(contents))
-        text = "".join([page.extract_text() or "" for page in reader.pages[:10]])
-        return {"text": text}
-    except Exception as e:
-        raise HTTPException(500, str(e))
-
-# 6. VISION (Updated Model Name)
-@app.post("/vision")
-async def vision(message: str = Form(...), file: UploadFile = File(...)):
-    if not client:
-        print("Error: Client is None. Check GROQ_API_KEY.")
-        raise HTTPException(500, "LLM Client not initialized. Check server logs.")
-
-    try:
-        print(f"Processing image: {file.filename}")
-        
-        contents = await file.read()
-        if not contents:
-            raise HTTPException(400, "Empty file uploaded")
-            
-        b64_image = base64.b64encode(contents).decode('utf-8')
-        
-        # Determine Mime Type
-        mime_type = "image/jpeg"
-        if file.content_type and "image" in file.content_type:
-            mime_type = file.content_type
-
-        # === FIX: Use the NEW 90B Model ===
-        model_name = "llama-3.2-90b-vision-preview" 
-        
-        print(f"Sending request to Groq with model: {model_name}")
-        
-        completion = client.chat.completions.create(
-            model=model_name,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": message},
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:{mime_type};base64,{b64_image}"
-                            }
-                        }
-                    ]
-                }
-            ],
-            temperature=0.5,
-            max_tokens=1024,
-            top_p=1,
-            stream=False,
-            stop=None,
-        )
-
-        answer = completion.choices[0].message.content
-        return {"type": "text", "content": answer}
-
-    except Exception as e:
-        print(f"CRITICAL VISION ERROR: {str(e)}")
-        raise HTTPException(500, f"Vision Error: {str(e)}")
-
-# 7. TRANSCRIBE
-@app.post("/transcribe")
-async def transcribe(file: UploadFile = File(...)):
-    if not client:
-        raise HTTPException(500, "Key Missing")
-    try:
-        with open("t.wav", "wb") as f:
-            f.write(await file.read())
-        
-        with open("t.wav", "rb") as f:
-            tx = client.audio.transcriptions.create(model="whisper-large-v3-turbo", file=f, response_format="text")
-        
-        return {"text": tx}
-    except Exception as e:
-        raise HTTPException(500, str(e))
