@@ -13,7 +13,7 @@ import razorpay
 import json
 from supabase import create_client, Client
 
-# PDF Report Generation Imports
+# PDF Generation
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 from reportlab.lib import colors
@@ -35,6 +35,7 @@ app = FastAPI(title="Dynamo AI API")
 
 app.add_middleware(
     CORSMiddleware,
+    # Allow all origins for maximum compatibility
     allow_origins=["*"], 
     allow_credentials=True,
     allow_methods=["*"],
@@ -138,7 +139,7 @@ async def generate_report(req: ReportRequest):
     buffer.seek(0)
     return StreamingResponse(buffer, media_type="application/pdf", headers={"Content-Disposition": "attachment; filename=report.pdf"})
 
-# 4. CHAT (Multi-Model)
+# 4. CHAT
 @app.post("/chat")
 async def chat_endpoint(req: ChatRequest):
     if not client:
@@ -178,32 +179,54 @@ async def upload_pdf(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(500, str(e))
 
-# 6. VISION
+# 6. VISION (Robust & Debuggable)
 @app.post("/vision")
 async def vision(message: str = Form(...), file: UploadFile = File(...)):
     if not client:
-        raise HTTPException(500, "Key Missing")
+        raise HTTPException(500, "LLM Key Missing")
     try:
-        b64 = base64.b64encode(await file.read()).decode('utf-8')
+        print(f"Analyzing image: {file.filename}") # Log for debugging
+        
+        # Read file
+        contents = await file.read()
+        b64 = base64.b64encode(contents).decode('utf-8')
+        
+        # Safe Content Type Fallback
+        mime_type = file.content_type
+        if not mime_type or "image" not in mime_type:
+            mime_type = "image/jpeg" # Force jpeg if unknown to prevent errors
+            
+        print(f"Sending to Groq with type: {mime_type}")
+
         res = client.chat.completions.create(
             model="llama-3.2-11b-vision-preview",
-            messages=[{"role":"user","content":[{"type":"text","text":message},{"type":"image_url","image_url":{"url":f"data:{file.content_type};base64,{b64}"}}]}]
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": message},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:{mime_type};base64,{b64}"
+                        }
+                    }
+                ]
+            }]
         )
         return {"type":"text","content":res.choices[0].message.content}
     except Exception as e:
-        raise HTTPException(500, str(e))
+        print(f"VISION ERROR: {str(e)}") # This will show in Render Logs
+        raise HTTPException(500, f"Vision failed: {str(e)}")
 
-# 7. TRANSCRIBE (Fixed Indentation)
+# 7. TRANSCRIBE
 @app.post("/transcribe")
 async def transcribe(file: UploadFile = File(...)):
     if not client:
         raise HTTPException(500, "Key Missing")
     try:
-        # Save temp file
         with open("t.wav", "wb") as f:
             f.write(await file.read())
         
-        # Transcribe
         with open("t.wav", "rb") as f:
             tx = client.audio.transcriptions.create(model="whisper-large-v3-turbo", file=f, response_format="text")
         
