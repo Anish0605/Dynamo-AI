@@ -179,44 +179,61 @@ async def upload_pdf(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(500, str(e))
 
-# 6. VISION (Robust & Debuggable)
+# 6. VISION (Updated Model Name)
 @app.post("/vision")
 async def vision(message: str = Form(...), file: UploadFile = File(...)):
     if not client:
-        raise HTTPException(500, "LLM Key Missing")
-    try:
-        print(f"Analyzing image: {file.filename}") # Log for debugging
-        
-        # Read file
-        contents = await file.read()
-        b64 = base64.b64encode(contents).decode('utf-8')
-        
-        # Safe Content Type Fallback
-        mime_type = file.content_type
-        if not mime_type or "image" not in mime_type:
-            mime_type = "image/jpeg" # Force jpeg if unknown to prevent errors
-            
-        print(f"Sending to Groq with type: {mime_type}")
+        print("Error: Client is None. Check GROQ_API_KEY.")
+        raise HTTPException(500, "LLM Client not initialized. Check server logs.")
 
-        res = client.chat.completions.create(
-            model="llama-3.2-11b-vision-preview",
-            messages=[{
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": message},
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:{mime_type};base64,{b64}"
+    try:
+        print(f"Processing image: {file.filename}")
+        
+        contents = await file.read()
+        if not contents:
+            raise HTTPException(400, "Empty file uploaded")
+            
+        b64_image = base64.b64encode(contents).decode('utf-8')
+        
+        # Determine Mime Type
+        mime_type = "image/jpeg"
+        if file.content_type and "image" in file.content_type:
+            mime_type = file.content_type
+
+        # === FIX: Use the NEW 90B Model ===
+        model_name = "llama-3.2-90b-vision-preview" 
+        
+        print(f"Sending request to Groq with model: {model_name}")
+        
+        completion = client.chat.completions.create(
+            model=model_name,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": message},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:{mime_type};base64,{b64_image}"
+                            }
                         }
-                    }
-                ]
-            }]
+                    ]
+                }
+            ],
+            temperature=0.5,
+            max_tokens=1024,
+            top_p=1,
+            stream=False,
+            stop=None,
         )
-        return {"type":"text","content":res.choices[0].message.content}
+
+        answer = completion.choices[0].message.content
+        return {"type": "text", "content": answer}
+
     except Exception as e:
-        print(f"VISION ERROR: {str(e)}") # This will show in Render Logs
-        raise HTTPException(500, f"Vision failed: {str(e)}")
+        print(f"CRITICAL VISION ERROR: {str(e)}")
+        raise HTTPException(500, f"Vision Error: {str(e)}")
 
 # 7. TRANSCRIBE
 @app.post("/transcribe")
