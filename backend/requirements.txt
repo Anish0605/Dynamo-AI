@@ -12,3 +12,4 @@ firebase-admin
 google-auth
 razorpay
 reportlab
+python-docx
