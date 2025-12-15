@@ -115,14 +115,14 @@ class ReportRequest(BaseModel):
 def health_check():
     return {"status": "Dynamo Brain (Gemini 2.0) is Active 🧠"}
 
-# --- CHAT ENDPOINT (Updated for Mind Maps) ---
+# --- CHAT ENDPOINT (Fixed for Mermaid) ---
 @app.post("/chat")
 async def chat_endpoint(req: ChatRequest):
     if not gemini_model:
         raise HTTPException(500, "Gemini API Key Missing")
     
     try:
-        # 1. Handle Image Generation commands
+        # 1. Handle Image Generation
         if "image" in req.message.lower() and ("generate" in req.message.lower() or "create" in req.message.lower()):
             clean = req.message.replace(" ", "%20")
             return {"type": "image", "content": f"https://image.pollinations.ai/prompt/{clean}?nologo=true"}
@@ -131,44 +131,52 @@ async def chat_endpoint(req: ChatRequest):
         context_str = ""
         if req.use_search and tavily and not req.pdf_context:
             try:
-                print("Searching web...")
                 res = tavily.search(query=req.message, search_depth="advanced" if req.deep_dive else "basic")
-                context_str += f"\n\n[WEB SEARCH RESULTS]:\n{res.get('results', [])}\n"
-            except Exception as e:
-                print(f"Search failed: {e}")
+                context_str += f"\n\n[WEB]:\n{res.get('results', [])}\n"
+            except: pass
 
         if req.pdf_context:
-            context_str += f"\n\n[USER UPLOADED DOCUMENT CONTEXT]:\n{req.pdf_context}\n"
+            context_str += f"\n\n[DOC]:\n{req.pdf_context}\n"
 
-        # 3. Prompt Construction (TEACHING GEMINI TO DRAW)
+        # 3. Prompt Construction (STRICT MERMAID RULES)
         system_instruction = """
-        You are Dynamo AI. 
-        If the user asks to 'visualize', 'map', 'chart', or 'draw' a process/concept:
-        1. Explain it briefly.
-        2. Generate a Mermaid.js diagram using strict syntax wrapped in ```mermaid ... ```.
-        3. Use 'graph TD' for flowcharts or 'mindmap' for mind maps.
-        Example:
-        ```mermaid
-        graph TD; A[Start]-->B[Process];
-        ```
+        You are Dynamo AI.
+        If the user asks to 'visualize', 'map', 'chart', or 'draw':
+        1. Explain briefly.
+        2. Generate a Mermaid.js diagram wrapped in ```mermaid ... ```.
+        3. STRICT SYNTAX RULES:
+           - For FLOWCHARTS/PROCESS use 'graph TD':
+             Example:
+             ```mermaid
+             graph TD
+               A[Start] --> B{Decision}
+               B -->|Yes| C[Result 1]
+               B -->|No| D[Result 2]
+             ```
+           - For MIND MAPS use 'mindmap' (Indentation ONLY, NO brackets/IDs):
+             Example:
+             ```mermaid
+             mindmap
+               root((Central Topic))
+                 Branch 1
+                   Sub-branch A
+                   Sub-branch B
+                 Branch 2
+             ```
         """
         
         full_prompt = system_instruction + "\n" + context_str + "\n"
-        
         for msg in req.history[-6:]:
-            role_label = "User" if msg.role == "user" else "Model"
-            full_prompt += f"{role_label}: {msg.content}\n"
-        
+            full_prompt += f"{'User' if msg.role == 'user' else 'Model'}: {msg.content}\n"
         full_prompt += f"User: {req.message}\nModel:"
 
         # 4. Generate Response
         response = gemini_model.generate_content(full_prompt)
-        
         return {"type": "text", "content": response.text}
 
     except Exception as e:
         print(f"Gemini Chat Error: {e}")
-        return {"type": "text", "content": "I encountered an error processing that request. Please try again."}
+        return {"type": "text", "content": "I encountered an error. Please try again."}
 
 # --- VISION ---
 @app.post("/vision")
