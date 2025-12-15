@@ -13,3 +13,4 @@ google-auth
 razorpay
 reportlab
 python-docx
+python-pptx
