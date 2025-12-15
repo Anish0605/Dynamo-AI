@@ -115,7 +115,7 @@ class ReportRequest(BaseModel):
 def health_check():
     return {"status": "Dynamo Brain (Gemini 2.0) is Active 🧠"}
 
-# --- CHAT ENDPOINT (Strict Syntax Fix) ---
+# --- CHAT ENDPOINT (Strict: Text Default, Diagram only on Request) ---
 @app.post("/chat")
 async def chat_endpoint(req: ChatRequest):
     if not gemini_model: raise HTTPException(500, "Gemini Key Missing")
@@ -135,22 +135,18 @@ async def chat_endpoint(req: ChatRequest):
             except: pass
         if req.pdf_context: context_str += f"\n\n[DOC]:\n{req.pdf_context}\n"
 
-        # 3. System Prompt (STRICT QUOTING RULE)
+        # 3. System Prompt (THE LOGIC FIX)
         system_instruction = """
         You are Dynamo AI.
-        If the user asks to 'visualize', 'map', 'chart', or 'draw':
-        1. Explain briefly.
-        2. Generate a Mermaid.js diagram wrapped in ```mermaid ... ```.
-        3. RULE: Use 'graph TD'. 
-        4. CRITICAL RULE: Wrap ALL label text in double quotes to prevent syntax errors.
-           CORRECT: A["Artificial Intelligence (AI)"]
-           WRONG: A[Artificial Intelligence (AI)]
-        Example:
-        ```mermaid
-        graph TD
-          A["Main Topic"] --> B["Sub-topic (Details)"]
-          A --> C["Another Branch"]
-        ```
+        
+        CORE BEHAVIOR RULES:
+        1. DEFAULT TO TEXT: For normal questions (e.g., "Why is the sky blue?", "Summarize this"), answer with TEXT ONLY. Do NOT generate a diagram.
+        2. DIAGRAM MODE: ONLY generate a Mermaid.js diagram if the user EXPLICITLY asks to "visualize", "draw", "chart", "map", or "flowchart".
+        
+        IF DIAGRAM IS REQUESTED:
+        - Use 'graph TD'.
+        - CRITICAL: Wrap ALL label text in double quotes to prevent syntax errors (e.g., A["Label Text"]).
+        - Wrap code in ```mermaid ... ```.
         """
         
         full_prompt = system_instruction + "\n" + context_str + "\n"
