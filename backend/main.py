@@ -115,7 +115,7 @@ class ReportRequest(BaseModel):
 def health_check():
     return {"status": "Dynamo Brain (Gemini 2.0) is Active 🧠"}
 
-# --- CHAT ENDPOINT (Fixed for Mermaid) ---
+# --- CHAT ENDPOINT (Updated: Robust Mermaid Fix) ---
 @app.post("/chat")
 async def chat_endpoint(req: ChatRequest):
     if not gemini_model:
@@ -138,31 +138,23 @@ async def chat_endpoint(req: ChatRequest):
         if req.pdf_context:
             context_str += f"\n\n[DOC]:\n{req.pdf_context}\n"
 
-        # 3. Prompt Construction (STRICT MERMAID RULES)
+        # 3. Prompt Construction (THE FIX)
+        # We explicitly force 'graph TD' to avoid 'mindmap' syntax errors.
         system_instruction = """
         You are Dynamo AI.
         If the user asks to 'visualize', 'map', 'chart', or 'draw':
         1. Explain briefly.
         2. Generate a Mermaid.js diagram wrapped in ```mermaid ... ```.
-        3. STRICT SYNTAX RULES:
-           - For FLOWCHARTS/PROCESS use 'graph TD':
-             Example:
-             ```mermaid
-             graph TD
-               A[Start] --> B{Decision}
-               B -->|Yes| C[Result 1]
-               B -->|No| D[Result 2]
-             ```
-           - For MIND MAPS use 'mindmap' (Indentation ONLY, NO brackets/IDs):
-             Example:
-             ```mermaid
-             mindmap
-               root((Central Topic))
-                 Branch 1
-                   Sub-branch A
-                   Sub-branch B
-                 Branch 2
-             ```
+        3. ALWAYS USE 'graph TD' (Top-Down Flowchart) syntax. DO NOT use 'mindmap'.
+        4. Use short IDs for nodes (A, B, C) and labels in brackets/parentheses.
+        Example:
+        ```mermaid
+        graph TD
+          A[Central Topic] --> B(Branch 1)
+          A --> C(Branch 2)
+          B --> D[Sub-topic]
+          style A fill:#f9f,stroke:#333,stroke-width:2px
+        ```
         """
         
         full_prompt = system_instruction + "\n" + context_str + "\n"
