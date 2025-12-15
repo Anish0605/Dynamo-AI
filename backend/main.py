@@ -115,45 +115,41 @@ class ReportRequest(BaseModel):
 def health_check():
     return {"status": "Dynamo Brain (Gemini 2.0) is Active 🧠"}
 
-# --- CHAT ENDPOINT (Updated: Robust Mermaid Fix) ---
+# --- CHAT ENDPOINT (Strict Syntax Fix) ---
 @app.post("/chat")
 async def chat_endpoint(req: ChatRequest):
-    if not gemini_model:
-        raise HTTPException(500, "Gemini API Key Missing")
+    if not gemini_model: raise HTTPException(500, "Gemini Key Missing")
     
     try:
-        # 1. Handle Image Generation
+        # 1. Image Check
         if "image" in req.message.lower() and ("generate" in req.message.lower() or "create" in req.message.lower()):
             clean = req.message.replace(" ", "%20")
             return {"type": "image", "content": f"https://image.pollinations.ai/prompt/{clean}?nologo=true"}
 
-        # 2. Build Context
+        # 2. Context
         context_str = ""
         if req.use_search and tavily and not req.pdf_context:
             try:
                 res = tavily.search(query=req.message, search_depth="advanced" if req.deep_dive else "basic")
                 context_str += f"\n\n[WEB]:\n{res.get('results', [])}\n"
             except: pass
+        if req.pdf_context: context_str += f"\n\n[DOC]:\n{req.pdf_context}\n"
 
-        if req.pdf_context:
-            context_str += f"\n\n[DOC]:\n{req.pdf_context}\n"
-
-        # 3. Prompt Construction (THE FIX)
-        # We explicitly force 'graph TD' to avoid 'mindmap' syntax errors.
+        # 3. System Prompt (STRICT QUOTING RULE)
         system_instruction = """
         You are Dynamo AI.
         If the user asks to 'visualize', 'map', 'chart', or 'draw':
         1. Explain briefly.
         2. Generate a Mermaid.js diagram wrapped in ```mermaid ... ```.
-        3. ALWAYS USE 'graph TD' (Top-Down Flowchart) syntax. DO NOT use 'mindmap'.
-        4. Use short IDs for nodes (A, B, C) and labels in brackets/parentheses.
+        3. RULE: Use 'graph TD'. 
+        4. CRITICAL RULE: Wrap ALL label text in double quotes to prevent syntax errors.
+           CORRECT: A["Artificial Intelligence (AI)"]
+           WRONG: A[Artificial Intelligence (AI)]
         Example:
         ```mermaid
         graph TD
-          A[Central Topic] --> B(Branch 1)
-          A --> C(Branch 2)
-          B --> D[Sub-topic]
-          style A fill:#f9f,stroke:#333,stroke-width:2px
+          A["Main Topic"] --> B["Sub-topic (Details)"]
+          A --> C["Another Branch"]
         ```
         """
         
@@ -162,13 +158,11 @@ async def chat_endpoint(req: ChatRequest):
             full_prompt += f"{'User' if msg.role == 'user' else 'Model'}: {msg.content}\n"
         full_prompt += f"User: {req.message}\nModel:"
 
-        # 4. Generate Response
         response = gemini_model.generate_content(full_prompt)
         return {"type": "text", "content": response.text}
 
     except Exception as e:
-        print(f"Gemini Chat Error: {e}")
-        return {"type": "text", "content": "I encountered an error. Please try again."}
+        return {"type": "text", "content": "Error processing request."}
 
 # --- VISION ---
 @app.post("/vision")
