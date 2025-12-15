@@ -19,7 +19,7 @@ from openai import OpenAI
 
 # --- DOCUMENT ENGINES ---
 from docx import Document
-from pptx import Presentation # <--- NEW
+from pptx import Presentation 
 from pptx.util import Inches, Pt
 
 # --- UTILS ---
@@ -115,33 +115,60 @@ class ReportRequest(BaseModel):
 def health_check():
     return {"status": "Dynamo Brain (Gemini 2.0) is Active 🧠"}
 
-# --- CHAT ---
+# --- CHAT ENDPOINT (Updated for Mind Maps) ---
 @app.post("/chat")
 async def chat_endpoint(req: ChatRequest):
-    if not gemini_model: raise HTTPException(500, "Gemini Key Missing")
+    if not gemini_model:
+        raise HTTPException(500, "Gemini API Key Missing")
+    
     try:
+        # 1. Handle Image Generation commands
         if "image" in req.message.lower() and ("generate" in req.message.lower() or "create" in req.message.lower()):
             clean = req.message.replace(" ", "%20")
             return {"type": "image", "content": f"https://image.pollinations.ai/prompt/{clean}?nologo=true"}
 
+        # 2. Build Context
         context_str = ""
         if req.use_search and tavily and not req.pdf_context:
             try:
+                print("Searching web...")
                 res = tavily.search(query=req.message, search_depth="advanced" if req.deep_dive else "basic")
-                context_str += f"\n\n[WEB]:\n{res.get('results', [])}\n"
-            except: pass
+                context_str += f"\n\n[WEB SEARCH RESULTS]:\n{res.get('results', [])}\n"
+            except Exception as e:
+                print(f"Search failed: {e}")
 
-        if req.pdf_context: context_str += f"\n\n[DOC]:\n{req.pdf_context}\n"
+        if req.pdf_context:
+            context_str += f"\n\n[USER UPLOADED DOCUMENT CONTEXT]:\n{req.pdf_context}\n"
 
-        full_prompt = "You are Dynamo AI.\n" + context_str + "\n"
+        # 3. Prompt Construction (TEACHING GEMINI TO DRAW)
+        system_instruction = """
+        You are Dynamo AI. 
+        If the user asks to 'visualize', 'map', 'chart', or 'draw' a process/concept:
+        1. Explain it briefly.
+        2. Generate a Mermaid.js diagram using strict syntax wrapped in ```mermaid ... ```.
+        3. Use 'graph TD' for flowcharts or 'mindmap' for mind maps.
+        Example:
+        ```mermaid
+        graph TD; A[Start]-->B[Process];
+        ```
+        """
+        
+        full_prompt = system_instruction + "\n" + context_str + "\n"
+        
         for msg in req.history[-6:]:
-            full_prompt += f"{'User' if msg.role == 'user' else 'Model'}: {msg.content}\n"
+            role_label = "User" if msg.role == "user" else "Model"
+            full_prompt += f"{role_label}: {msg.content}\n"
+        
         full_prompt += f"User: {req.message}\nModel:"
 
+        # 4. Generate Response
         response = gemini_model.generate_content(full_prompt)
+        
         return {"type": "text", "content": response.text}
+
     except Exception as e:
-        return {"type": "text", "content": "Error processing request."}
+        print(f"Gemini Chat Error: {e}")
+        return {"type": "text", "content": "I encountered an error processing that request. Please try again."}
 
 # --- VISION ---
 @app.post("/vision")
@@ -183,7 +210,7 @@ async def generate_word(req: ReportRequest):
         return StreamingResponse(buffer, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document", headers={"Content-Disposition": "attachment; filename=dynamo.docx"})
     except Exception as e: raise HTTPException(500, str(e))
 
-# --- NEW: PPT EXPORT ---
+# --- PPT EXPORT ---
 @app.post("/generate-ppt")
 async def generate_ppt(req: ReportRequest):
     if not gemini_model: raise HTTPException(500, "Gemini Key Missing")
