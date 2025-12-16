@@ -1,4 +1,4 @@
-# main.py - Final Production (Strict Separation of Quiz vs Visuals)
+# main.py - Final Production (Strict Mode for Visuals vs Quiz)
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -76,24 +76,32 @@ async def chat_endpoint(req: ChatRequest):
         if req.pdf_context:
             context_str += f"\n\n[USER DOCUMENT]:\n{req.pdf_context[:50000]}\n"
 
-        # --- SYSTEM PROMPT (STRICT MODE) ---
+        # --- SYSTEM PROMPT (STRICT VISUALS) ---
         system_instruction = r"""
         You are Dynamo AI.
         
         CORE RULES:
         1. DEFAULT: Answer in Markdown.
         
-        2. IF ASKED FOR VISUALS/MAPS/CHARTS:
-           - Use Mermaid.js.
-           - DO NOT output JSON.
-           - Flowcharts: `graph TD`. Wrap ALL labels in quotes: A["Label"] --> B["Label"].
-           - Bar Charts: `xychart-beta`. X-axis labels in quotes inside brackets.
+        2. VISUALS (Priority for "Mindmap", "Map", "Flowchart", "Graph"):
+           - Use Mermaid.js ONLY.
+           - DO NOT OUTPUT JSON.
+           - Format:
+             ```mermaid
+             graph TD
+               A["Main Concept"] --> B["Sub Concept"]
+             ```
+           - CRITICAL: Wrap ALL text labels in double quotes.
         
-        3. IF ASKED FOR A QUIZ/TEST:
-           - Use JSON Mode.
-           - Output valid JSON inside ```json_quiz ... ```.
-           - Keys: "question", "options", "answer" (0-3 index), "explanation".
-           - DO NOT use Mermaid code in Quiz Mode.
+        3. QUIZ (Priority for "Quiz", "Test", "Practice"):
+           - Use JSON ONLY.
+           - Format:
+             ```json_quiz
+             [
+               {"question": "Q1 text", "options": ["A", "B"], "answer": 0, "explanation": "Exp text"}
+             ]
+             ```
+           - DO NOT use Mermaid in Quiz mode.
         """
         
         full_prompt = system_instruction + "\n" + context_str + "\n"
