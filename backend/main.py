@@ -1,4 +1,4 @@
-# main.py
+# main.py - Final Fixed Version
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
@@ -27,17 +27,16 @@ TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
 gemini_model = None
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
-    # Default to Flash for speed
     gemini_model = genai.GenerativeModel("gemini-2.0-flash-exp")
 
 tavily = None
 if TAVILY_API_KEY:
     tavily = TavilyClient(api_key=TAVILY_API_KEY)
 
-# --- REQUEST MODELS ---
+# --- REQUEST MODEL ---
 class ChatRequest(BaseModel):
     message: str
-    history: list = []
+    history: list = []  # Defaults to empty list
     use_search: bool = True
     deep_dive: bool = False
     model: str = "gemini-2.0-flash"
@@ -50,89 +49,82 @@ async def chat_endpoint(req: ChatRequest):
         raise HTTPException(500, "Gemini Key Missing")
     
     try:
-        # 1. Image Generation Check
+        # 1. Image Check
         if "image" in req.message.lower() and ("generate" in req.message.lower() or "create" in req.message.lower()):
             clean_prompt = req.message.replace(" ", "%20")
-            # Pollinations AI for free image generation
             return {"type": "image", "content": f"https://image.pollinations.ai/prompt/{clean_prompt}?nologo=true"}
 
-        # 2. Build Context
+        # 2. Context Building
         context_str = ""
         
-        # A. Web Search (Tavily)
+        # Web Search
         if req.use_search and tavily and not req.pdf_context:
             try:
                 print("🔍 Searching Tavily...")
                 search_depth = "advanced" if req.deep_dive else "basic"
                 res = tavily.search(query=req.message, search_depth=search_depth, max_results=3)
-                context_str += f"\n\n[REAL-TIME WEB DATA]:\n{res.get('results', [])}\n"
+                context_str += f"\n\n[WEB RESULTS]:\n{res.get('results', [])}\n"
             except Exception as e:
                 print(f"Search Error: {e}")
 
-        # B. PDF Context
+        # PDF Context
         if req.pdf_context:
-            context_str += f"\n\n[USER UPLOADED DOCUMENT]:\n{req.pdf_context[:20000]}\n" # Limit char count
+            context_str += f"\n\n[DOCUMENT CONTEXT]:\n{req.pdf_context[:20000]}\n"
 
-        # 3. System Prompt (Strict JSON & Visuals)
-        # We use a RAW string (r"") to ensure backslashes are handled correctly in Python
+        # 3. System Prompt (Quiz & Visuals)
         system_instruction = r"""
         You are Dynamo AI.
         
-        CORE BEHAVIOR:
+        RULES:
         1. DEFAULT: Answer naturally in Markdown.
-        2. VISUALS: If asked to "visualize", "map", or "chart", use Mermaid.js (graph TD or xychart-beta).
+        2. VISUALS: If asked for a "map", "chart", or "flow", use Mermaid.js code blocks (graph TD or xychart-beta).
         
-        3. *** QUIZ MODE (CRITICAL STRICT RULES) ***
-           If the user asks for a "quiz", "test", or "practice":
-           - You MUST output the data inside a ```json_quiz``` block.
-           - THE JSON MUST BE VALID.
-           - CRITICAL: Do NOT use real newlines inside the strings. Use '\n' literal.
-           - CRITICAL: Escape all double quotes inside strings (e.g., "print(\"Hello\")").
-           
-           Target Format:
+        3. *** QUIZ MODE ***
+           If the user asks for a quiz/test:
+           - Output a ```json_quiz``` block.
+           - NO NEWLINES inside JSON strings. Use \n instead.
+           - FORMAT:
            ```json_quiz
            [
-             {
-               "question": "What is the result of 2 + 2?",
-               "options": ["3", "4", "5", "22"],
-               "answer": 1, 
-               "explanation": "2 plus 2 equals 4."
-             }
+             {"question": "Q1 text?", "options": ["A", "B", "C", "D"], "answer": 0, "explanation": "Exp text."}
            ]
            ```
-           - 'answer' must be the numeric index (0, 1, 2, 3).
-           - Generate 3-5 questions.
+           - 'answer' must be the index number (0, 1, 2, 3).
         """
         
-        # 4. Construct History
+        # 4. Construct History (THE FIX IS HERE)
         full_prompt = system_instruction + "\n" + context_str + "\n"
-        for msg in req.history[-6:]: # Keep last 6 turns
-            full_prompt += f"{'User' if msg.role == 'user' else 'Model'}: {msg.content}\n"
+        
+        for msg in req.history[-6:]:
+            # FIX: We now check if it's a dictionary OR an object to prevent the crash
+            role = msg.get('role', 'user') if isinstance(msg, dict) else getattr(msg, 'role', 'user')
+            content = msg.get('content', '') if isinstance(msg, dict) else getattr(msg, 'content', '')
+            
+            full_prompt += f"{'User' if role == 'user' else 'Model'}: {content}\n"
         
         full_prompt += f"User: {req.message}\nModel:"
 
-        # 5. Select Model Version
+        # 5. Model Selection & Generation
         active_model = gemini_model
         if req.model == "gemini-1.5-pro":
              active_model = genai.GenerativeModel("gemini-1.5-pro")
 
-        # 6. Generate
         response = active_model.generate_content(full_prompt)
         return {"type": "text", "content": response.text}
 
     except Exception as e:
-        print(f"Backend Error: {e}")
-        return {"type": "text", "content": f"I encountered an error: {str(e)}"}
+        print(f"Backend Crash: {e}") # This will show in Render logs
+        return {"type": "text", "content": f"System Error: {str(e)}"}
 
-# --- FILE UPLOADS (Stubbed for completeness) ---
+# --- STUB ENDPOINTS (Required for frontend to not break) ---
 @app.post("/upload-pdf")
-async def upload_pdf(): return {"text": "PDF extraction placeholder"}
+async def upload_pdf(): return {"text": "PDF Upload Placeholder"}
 
 @app.post("/vision")
-async def vision_analysis(): return {"content": "Image analysis placeholder"}
+async def vision_analysis(): return {"content": "Image Analysis Placeholder"}
 
 @app.post("/transcribe")
-async def transcribe_audio(): return {"text": "Audio transcription placeholder"}
+async def transcribe_audio(): return {"text": "Transcription Placeholder"}
 
 if __name__ == "__main__":
     import uvicorn
