@@ -1,4 +1,4 @@
-# main.py - Final (With Export Support)
+# main.py - Final Production (Fixed Exports + All Features)
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -31,6 +31,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# --- CONFIG ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
 
@@ -43,6 +44,7 @@ tavily = None
 if TAVILY_API_KEY:
     tavily = TavilyClient(api_key=TAVILY_API_KEY)
 
+# --- DATA MODELS ---
 class ChatRequest(BaseModel):
     message: str
     history: list = []
@@ -51,35 +53,55 @@ class ChatRequest(BaseModel):
     model: str = "gemini-2.0-flash"
     pdf_context: str = None
 
-# --- CHAT ENDPOINT ---
+# NEW: Specific model for exports to prevent 422 Errors
+class ExportRequest(BaseModel):
+    history: list
+
+# --- CHAT ENDPOINT (Mind Maps & Quiz included) ---
 @app.post("/chat")
 async def chat_endpoint(req: ChatRequest):
     if not gemini_model: raise HTTPException(500, "Gemini Key Missing")
+    
     try:
+        # 1. Image Generation Check
         if "image" in req.message.lower() and ("generate" in req.message.lower() or "create" in req.message.lower()):
             clean = req.message.replace(" ", "%20")
             return {"type": "image", "content": f"https://image.pollinations.ai/prompt/{clean}?nologo=true"}
 
+        # 2. Context Building
         context_str = ""
+        
+        # Web Search
         if req.use_search and not req.pdf_context and tavily:
             try:
                 res = tavily.search(query=req.message, search_depth="advanced" if req.deep_dive else "basic", max_results=3)
-                context_str += f"\n\n[WEB]:\n{res.get('results', [])}\n"
+                context_str += f"\n\n[WEB RESULTS]:\n{res.get('results', [])}\n"
             except: pass
 
+        # PDF Context
         if req.pdf_context:
-            context_str += f"\n\n[DOC]:\n{req.pdf_context[:50000]}\n"
+            context_str += f"\n\n[USER DOCUMENT]:\n{req.pdf_context[:50000]}\n"
 
+        # 3. System Prompt (Mind Map & Quiz Rules)
         system_instruction = r"""
         You are Dynamo AI.
+        
         RULES:
         1. DEFAULT: Answer in Markdown.
-        2. VISUALS: Use 'graph TD' or 'xychart-beta' ONLY if asked. Wrap node text in quotes.
-        3. QUIZ: Output valid JSON inside ```json_quiz ... ```.
+        2. VISUALS (Mermaid.js):
+           - Use 'graph TD' for maps/processes.
+           - CRITICAL: You MUST wrap ALL node text in double quotes to prevent syntax errors.
+             CORRECT: A["Start"] --> B["End Process"]
+             WRONG: A[Start] --> B[End Process]
+        3. QUIZ:
+           - Trigger: If user asks for a quiz/test.
+           - Output: Valid JSON inside ```json_quiz ... ```.
+           - Keys: "question", "options", "answer" (0-3 index), "explanation".
         """
         
         full_prompt = system_instruction + "\n" + context_str + "\n"
         for msg in req.history[-6:]:
+            # Handle potential dict vs object mismatch
             role = msg.get('role', 'user') if isinstance(msg, dict) else getattr(msg, 'role', 'user')
             content = msg.get('content', '') if isinstance(msg, dict) else getattr(msg, 'content', '')
             full_prompt += f"{'User' if role == 'user' else 'Model'}: {content}\n"
@@ -93,20 +115,20 @@ async def chat_endpoint(req: ChatRequest):
         return {"type": "text", "content": response.text}
 
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Chat Error: {e}")
         return {"type": "text", "content": f"Error: {str(e)}"}
 
-# --- EXPORT ENDPOINTS (NEW) ---
+# --- EXPORT ENDPOINTS (Fixed with ExportRequest) ---
 
 @app.post("/generate-word")
-async def generate_word(req: ChatRequest):
+async def generate_word(req: ExportRequest):
     doc = Document()
     doc.add_heading('Dynamo AI Report', 0)
     for msg in req.history:
-        role = msg.get('role', 'User')
-        content = msg.get('content', '')
-        doc.add_heading(role.capitalize(), level=1)
-        doc.add_paragraph(content)
+        role = msg.get('role', 'User') if isinstance(msg, dict) else msg.role
+        content = msg.get('content', '') if isinstance(msg, dict) else msg.content
+        doc.add_heading(str(role).capitalize(), level=1)
+        doc.add_paragraph(str(content))
     
     byte_io = io.BytesIO()
     doc.save(byte_io)
@@ -114,17 +136,19 @@ async def generate_word(req: ChatRequest):
     return StreamingResponse(byte_io, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document", headers={"Content-Disposition": "attachment; filename=Dynamo_Report.docx"})
 
 @app.post("/generate-ppt")
-async def generate_ppt(req: ChatRequest):
+async def generate_ppt(req: ExportRequest):
     prs = Presentation()
     for msg in req.history:
-        role = msg.get('role', 'User')
-        content = msg.get('content', '')[:500] # Limit slide text
-        slide_layout = prs.slide_layouts[1]
+        role = msg.get('role', 'User') if isinstance(msg, dict) else msg.role
+        content = msg.get('content', '') if isinstance(msg, dict) else msg.content
+        
+        slide_layout = prs.slide_layouts[1] # Title and Content
         slide = prs.slides.add_slide(slide_layout)
         title = slide.shapes.title
         body = slide.placeholders[1]
-        title.text = role.capitalize()
-        body.text = content
+        
+        title.text = str(role).capitalize()
+        body.text = str(content)[:800] # Limit text per slide
         
     byte_io = io.BytesIO()
     prs.save(byte_io)
@@ -132,7 +156,7 @@ async def generate_ppt(req: ChatRequest):
     return StreamingResponse(byte_io, media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation", headers={"Content-Disposition": "attachment; filename=Dynamo_Presentation.pptx"})
 
 @app.post("/generate-report") # PDF
-async def generate_pdf(req: ChatRequest):
+async def generate_pdf(req: ExportRequest):
     byte_io = io.BytesIO()
     doc = SimpleDocTemplate(byte_io, pagesize=letter)
     styles = getSampleStyleSheet()
@@ -142,23 +166,22 @@ async def generate_pdf(req: ChatRequest):
     story.append(Spacer(1, 12))
     
     for msg in req.history:
-        role = msg.get('role', 'User')
-        content = msg.get('content', '')
-        # Simple text cleanup for PDF
-        clean_content = content.replace('\n', '<br/>')
-        story.append(Paragraph(f"<b>{role.capitalize()}:</b>", styles['Heading2']))
+        role = msg.get('role', 'User') if isinstance(msg, dict) else msg.role
+        content = msg.get('content', '') if isinstance(msg, dict) else msg.content
+        clean_content = str(content).replace('\n', '<br/>')
+        
+        story.append(Paragraph(f"<b>{str(role).capitalize()}:</b>", styles['Heading2']))
         try:
             story.append(Paragraph(clean_content, styles['Normal']))
         except:
-            story.append(Paragraph("Content could not be rendered.", styles['Normal']))
+            story.append(Paragraph("Content not renderable in PDF.", styles['Normal']))
         story.append(Spacer(1, 12))
         
     doc.build(story)
     byte_io.seek(0)
     return StreamingResponse(byte_io, media_type="application/pdf", headers={"Content-Disposition": "attachment; filename=Dynamo_Report.pdf"})
 
-
-# --- OTHER ENDPOINTS ---
+# --- FILE & MEDIA ENDPOINTS ---
 @app.post("/upload-pdf")
 async def upload_pdf(file: UploadFile = File(...)):
     try:
@@ -168,7 +191,7 @@ async def upload_pdf(file: UploadFile = File(...)):
             text += page.extract_text() + "\n"
         return {"text": text.strip()} 
     except Exception as e:
-        return {"text": "Error reading PDF."}
+        return {"text": "Error reading PDF. Ensure it is a valid text PDF."}
 
 @app.post("/vision")
 async def vision_analysis(file: UploadFile = File(...), message: str = Form("Describe this image")):
