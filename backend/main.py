@@ -1,4 +1,4 @@
-# main.py - Final Production (Bar Graph Syntax Fix)
+# main.py - Production Ready (Bar Graph Syntax Fixed)
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -62,12 +62,12 @@ async def chat_endpoint(req: ChatRequest):
     if not gemini_model: raise HTTPException(500, "Gemini Key Missing")
     
     try:
-        # 1. Image Generation Check
+        # 1. Image Check
         if "image" in req.message.lower() and ("generate" in req.message.lower() or "create" in req.message.lower()):
             clean = req.message.replace(" ", "%20")
             return {"type": "image", "content": f"https://image.pollinations.ai/prompt/{clean}?nologo=true"}
 
-        # 2. Context Building
+        # 2. Context
         context_str = ""
         if req.use_search and not req.pdf_context and tavily:
             try:
@@ -78,7 +78,7 @@ async def chat_endpoint(req: ChatRequest):
         if req.pdf_context:
             context_str += f"\n\n[USER DOCUMENT]:\n{req.pdf_context[:50000]}\n"
 
-        # 3. System Prompt (Refined for Bar Graphs)
+        # 3. SYSTEM PROMPT (Strict Visuals)
         system_instruction = r"""
         You are Dynamo AI.
         
@@ -86,23 +86,22 @@ async def chat_endpoint(req: ChatRequest):
         1. DEFAULT: Answer in Markdown.
         
         2. VISUALS (Mermaid.js):
-           - FLOWCHARTS: Use 'graph TD'. Wrap ALL node text in double quotes (e.g., A["Start"]).
+           - FLOWCHARTS: Use 'graph TD'. Wrap labels in quotes: A["Start"] --> B["End"]
            - BAR CHARTS: Use 'xychart-beta'.
-             * CRITICAL: x-axis labels MUST be in square brackets [ "A", "B" ].
-             * CRITICAL: bar data MUST be in square brackets [ 10, 20 ].
+             * CRITICAL: X-axis labels MUST be strings in quotes inside brackets.
+             * CRITICAL: Data MUST be numbers inside brackets.
              * Example:
                ```mermaid
                xychart-beta
-               title "Sales Data"
-               x-axis [ "Q1", "Q2", "Q3" ]
-               y-axis "Revenue" 0 --> 100
-               bar [ 50, 75, 90 ]
+               title "Population"
+               x-axis [ "India", "China", "USA" ]
+               y-axis "Millions" 0 --> 1500
+               bar [ 1400, 1300, 330 ]
                ```
         
         3. QUIZ:
-           - Trigger: If user asks for a quiz/test.
-           - Output: Valid JSON inside ```json_quiz ... ```.
-           - Keys: "question", "options", "answer" (0-3 index), "explanation".
+           - Output valid JSON inside ```json_quiz ... ```.
+           - Keys: "question", "options", "answer" (0-3), "explanation".
         """
         
         full_prompt = system_instruction + "\n" + context_str + "\n"
@@ -144,12 +143,9 @@ async def generate_ppt(req: ExportRequest):
     for msg in req.history:
         role = msg.get('role', 'User') if isinstance(msg, dict) else msg.role
         content = msg.get('content', '') if isinstance(msg, dict) else msg.content
-        slide_layout = prs.slide_layouts[1]
-        slide = prs.slides.add_slide(slide_layout)
-        title = slide.shapes.title
-        body = slide.placeholders[1]
-        title.text = str(role).capitalize()
-        body.text = str(content)[:800]
+        slide = prs.slides.add_slide(prs.slide_layouts[1])
+        slide.shapes.title.text = str(role).capitalize()
+        slide.placeholders[1].text = str(content)[:800]
     byte_io = io.BytesIO()
     prs.save(byte_io)
     byte_io.seek(0)
@@ -159,29 +155,24 @@ async def generate_ppt(req: ExportRequest):
 async def generate_pdf(req: ExportRequest):
     byte_io = io.BytesIO()
     doc = SimpleDocTemplate(byte_io, pagesize=letter)
-    styles = getSampleStyleSheet()
-    story = []
-    story.append(Paragraph("Dynamo AI Report", styles['Title']))
-    story.append(Spacer(1, 12))
+    story = [Paragraph("Dynamo AI Report", getSampleStyleSheet()['Title']), Spacer(1, 12)]
     for msg in req.history:
         role = msg.get('role', 'User') if isinstance(msg, dict) else msg.role
         content = msg.get('content', '') if isinstance(msg, dict) else msg.content
-        clean_content = str(content).replace('\n', '<br/>')
-        story.append(Paragraph(f"<b>{str(role).capitalize()}:</b>", styles['Heading2']))
-        try: story.append(Paragraph(clean_content, styles['Normal']))
-        except: story.append(Paragraph("Content error.", styles['Normal']))
+        story.append(Paragraph(f"<b>{str(role).capitalize()}:</b>", getSampleStyleSheet()['Heading2']))
+        try: story.append(Paragraph(str(content).replace('\n', '<br/>'), getSampleStyleSheet()['Normal']))
+        except: pass
         story.append(Spacer(1, 12))
     doc.build(story)
     byte_io.seek(0)
     return StreamingResponse(byte_io, media_type="application/pdf", headers={"Content-Disposition": "attachment; filename=Dynamo_Report.pdf"})
 
-# --- FILE ENDPOINTS ---
+# --- FILES ---
 @app.post("/upload-pdf")
 async def upload_pdf(file: UploadFile = File(...)):
     try:
         reader = PdfReader(file.file)
-        text = ""
-        for page in reader.pages: text += page.extract_text() + "\n"
+        text = "".join([p.extract_text() for p in reader.pages])
         return {"text": text.strip()} 
     except: return {"text": "Error reading PDF."}
 
@@ -199,11 +190,11 @@ async def vision_analysis(file: UploadFile = File(...), message: str = Form("Des
 async def transcribe_audio(file: UploadFile = File(...)):
     if not gemini_model: return {"text": "Gemini Key Missing"}
     try:
-        temp_filename = f"temp_{int(time.time())}.wav"
-        with open(temp_filename, "wb") as buffer: shutil.copyfileobj(file.file, buffer)
-        uploaded_file = genai.upload_file(temp_filename)
-        response = gemini_model.generate_content([uploaded_file, "Transcribe exactly."])
-        os.remove(temp_filename)
+        temp = f"temp_{int(time.time())}.wav"
+        with open(temp, "wb") as buffer: shutil.copyfileobj(file.file, buffer)
+        uploaded = genai.upload_file(temp)
+        response = gemini_model.generate_content([uploaded, "Transcribe exactly."])
+        os.remove(temp)
         return {"text": response.text.strip()}
     except: return {"text": "Error transcribing."}
 
