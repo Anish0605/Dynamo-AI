@@ -1,4 +1,4 @@
-# main.py - Final Production (Fixed Exports + All Features)
+# main.py - Final Production (Bar Graph Syntax Fix)
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -53,11 +53,10 @@ class ChatRequest(BaseModel):
     model: str = "gemini-2.0-flash"
     pdf_context: str = None
 
-# NEW: Specific model for exports to prevent 422 Errors
 class ExportRequest(BaseModel):
     history: list
 
-# --- CHAT ENDPOINT (Mind Maps & Quiz included) ---
+# --- CHAT ENDPOINT ---
 @app.post("/chat")
 async def chat_endpoint(req: ChatRequest):
     if not gemini_model: raise HTTPException(500, "Gemini Key Missing")
@@ -70,29 +69,36 @@ async def chat_endpoint(req: ChatRequest):
 
         # 2. Context Building
         context_str = ""
-        
-        # Web Search
         if req.use_search and not req.pdf_context and tavily:
             try:
                 res = tavily.search(query=req.message, search_depth="advanced" if req.deep_dive else "basic", max_results=3)
                 context_str += f"\n\n[WEB RESULTS]:\n{res.get('results', [])}\n"
             except: pass
 
-        # PDF Context
         if req.pdf_context:
             context_str += f"\n\n[USER DOCUMENT]:\n{req.pdf_context[:50000]}\n"
 
-        # 3. System Prompt (Mind Map & Quiz Rules)
+        # 3. System Prompt (Refined for Bar Graphs)
         system_instruction = r"""
         You are Dynamo AI.
         
         RULES:
         1. DEFAULT: Answer in Markdown.
+        
         2. VISUALS (Mermaid.js):
-           - Use 'graph TD' for maps/processes.
-           - CRITICAL: You MUST wrap ALL node text in double quotes to prevent syntax errors.
-             CORRECT: A["Start"] --> B["End Process"]
-             WRONG: A[Start] --> B[End Process]
+           - FLOWCHARTS: Use 'graph TD'. Wrap ALL node text in double quotes (e.g., A["Start"]).
+           - BAR CHARTS: Use 'xychart-beta'.
+             * CRITICAL: x-axis labels MUST be in square brackets [ "A", "B" ].
+             * CRITICAL: bar data MUST be in square brackets [ 10, 20 ].
+             * Example:
+               ```mermaid
+               xychart-beta
+               title "Sales Data"
+               x-axis [ "Q1", "Q2", "Q3" ]
+               y-axis "Revenue" 0 --> 100
+               bar [ 50, 75, 90 ]
+               ```
+        
         3. QUIZ:
            - Trigger: If user asks for a quiz/test.
            - Output: Valid JSON inside ```json_quiz ... ```.
@@ -101,7 +107,6 @@ async def chat_endpoint(req: ChatRequest):
         
         full_prompt = system_instruction + "\n" + context_str + "\n"
         for msg in req.history[-6:]:
-            # Handle potential dict vs object mismatch
             role = msg.get('role', 'user') if isinstance(msg, dict) else getattr(msg, 'role', 'user')
             content = msg.get('content', '') if isinstance(msg, dict) else getattr(msg, 'content', '')
             full_prompt += f"{'User' if role == 'user' else 'Model'}: {content}\n"
@@ -118,8 +123,7 @@ async def chat_endpoint(req: ChatRequest):
         print(f"Chat Error: {e}")
         return {"type": "text", "content": f"Error: {str(e)}"}
 
-# --- EXPORT ENDPOINTS (Fixed with ExportRequest) ---
-
+# --- EXPORT ENDPOINTS ---
 @app.post("/generate-word")
 async def generate_word(req: ExportRequest):
     doc = Document()
@@ -129,7 +133,6 @@ async def generate_word(req: ExportRequest):
         content = msg.get('content', '') if isinstance(msg, dict) else msg.content
         doc.add_heading(str(role).capitalize(), level=1)
         doc.add_paragraph(str(content))
-    
     byte_io = io.BytesIO()
     doc.save(byte_io)
     byte_io.seek(0)
@@ -141,57 +144,46 @@ async def generate_ppt(req: ExportRequest):
     for msg in req.history:
         role = msg.get('role', 'User') if isinstance(msg, dict) else msg.role
         content = msg.get('content', '') if isinstance(msg, dict) else msg.content
-        
-        slide_layout = prs.slide_layouts[1] # Title and Content
+        slide_layout = prs.slide_layouts[1]
         slide = prs.slides.add_slide(slide_layout)
         title = slide.shapes.title
         body = slide.placeholders[1]
-        
         title.text = str(role).capitalize()
-        body.text = str(content)[:800] # Limit text per slide
-        
+        body.text = str(content)[:800]
     byte_io = io.BytesIO()
     prs.save(byte_io)
     byte_io.seek(0)
     return StreamingResponse(byte_io, media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation", headers={"Content-Disposition": "attachment; filename=Dynamo_Presentation.pptx"})
 
-@app.post("/generate-report") # PDF
+@app.post("/generate-report")
 async def generate_pdf(req: ExportRequest):
     byte_io = io.BytesIO()
     doc = SimpleDocTemplate(byte_io, pagesize=letter)
     styles = getSampleStyleSheet()
     story = []
-    
     story.append(Paragraph("Dynamo AI Report", styles['Title']))
     story.append(Spacer(1, 12))
-    
     for msg in req.history:
         role = msg.get('role', 'User') if isinstance(msg, dict) else msg.role
         content = msg.get('content', '') if isinstance(msg, dict) else msg.content
         clean_content = str(content).replace('\n', '<br/>')
-        
         story.append(Paragraph(f"<b>{str(role).capitalize()}:</b>", styles['Heading2']))
-        try:
-            story.append(Paragraph(clean_content, styles['Normal']))
-        except:
-            story.append(Paragraph("Content not renderable in PDF.", styles['Normal']))
+        try: story.append(Paragraph(clean_content, styles['Normal']))
+        except: story.append(Paragraph("Content error.", styles['Normal']))
         story.append(Spacer(1, 12))
-        
     doc.build(story)
     byte_io.seek(0)
     return StreamingResponse(byte_io, media_type="application/pdf", headers={"Content-Disposition": "attachment; filename=Dynamo_Report.pdf"})
 
-# --- FILE & MEDIA ENDPOINTS ---
+# --- FILE ENDPOINTS ---
 @app.post("/upload-pdf")
 async def upload_pdf(file: UploadFile = File(...)):
     try:
         reader = PdfReader(file.file)
         text = ""
-        for page in reader.pages:
-            text += page.extract_text() + "\n"
+        for page in reader.pages: text += page.extract_text() + "\n"
         return {"text": text.strip()} 
-    except Exception as e:
-        return {"text": "Error reading PDF. Ensure it is a valid text PDF."}
+    except: return {"text": "Error reading PDF."}
 
 @app.post("/vision")
 async def vision_analysis(file: UploadFile = File(...), message: str = Form("Describe this image")):
@@ -201,7 +193,7 @@ async def vision_analysis(file: UploadFile = File(...), message: str = Form("Des
         image = Image.open(io.BytesIO(contents))
         response = gemini_model.generate_content([message, image])
         return {"content": response.text}
-    except Exception: return {"content": "Error analyzing image."}
+    except: return {"content": "Error analyzing image."}
 
 @app.post("/transcribe")
 async def transcribe_audio(file: UploadFile = File(...)):
@@ -213,7 +205,7 @@ async def transcribe_audio(file: UploadFile = File(...)):
         response = gemini_model.generate_content([uploaded_file, "Transcribe exactly."])
         os.remove(temp_filename)
         return {"text": response.text.strip()}
-    except Exception: return {"text": "Error transcribing."}
+    except: return {"text": "Error transcribing."}
 
 if __name__ == "__main__":
     import uvicorn
