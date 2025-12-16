@@ -1,17 +1,18 @@
-# main.py - Final Fixed Version
-from fastapi import FastAPI, HTTPException
+# main.py
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 import os
 import google.generativeai as genai
 from tavily import TavilyClient
 from dotenv import load_dotenv
+import shutil
+import time
 
 load_dotenv()
 
 app = FastAPI()
 
-# Enable CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -33,78 +34,60 @@ tavily = None
 if TAVILY_API_KEY:
     tavily = TavilyClient(api_key=TAVILY_API_KEY)
 
-# --- REQUEST MODEL ---
 class ChatRequest(BaseModel):
     message: str
-    history: list = []  # Defaults to empty list
+    history: list = []
     use_search: bool = True
     deep_dive: bool = False
     model: str = "gemini-2.0-flash"
     pdf_context: str = None
 
-# --- CHAT ENDPOINT ---
 @app.post("/chat")
 async def chat_endpoint(req: ChatRequest):
-    if not gemini_model: 
-        raise HTTPException(500, "Gemini Key Missing")
+    if not gemini_model: raise HTTPException(500, "Gemini Key Missing")
     
     try:
         # 1. Image Check
         if "image" in req.message.lower() and ("generate" in req.message.lower() or "create" in req.message.lower()):
-            clean_prompt = req.message.replace(" ", "%20")
-            return {"type": "image", "content": f"https://image.pollinations.ai/prompt/{clean_prompt}?nologo=true"}
+            clean = req.message.replace(" ", "%20")
+            return {"type": "image", "content": f"https://image.pollinations.ai/prompt/{clean}?nologo=true"}
 
-        # 2. Context Building
+        # 2. Context
         context_str = ""
         
-        # Web Search
-        if req.use_search and tavily and not req.pdf_context:
-            try:
-                print("🔍 Searching Tavily...")
-                search_depth = "advanced" if req.deep_dive else "basic"
-                res = tavily.search(query=req.message, search_depth=search_depth, max_results=3)
-                context_str += f"\n\n[WEB RESULTS]:\n{res.get('results', [])}\n"
-            except Exception as e:
-                print(f"Search Error: {e}")
+        # Web Search logic
+        if req.use_search and not req.pdf_context:
+            if tavily:
+                try:
+                    # print("🔍 Searching Web...") 
+                    depth = "advanced" if req.deep_dive else "basic"
+                    res = tavily.search(query=req.message, search_depth=depth, max_results=3)
+                    context_str += f"\n\n[WEB SEARCH RESULTS]:\n{res.get('results', [])}\n"
+                except Exception as e:
+                    print(f"Tavily Error: {e}")
+            else:
+                print("⚠️ Search requested but TAVILY_API_KEY not set.")
 
-        # PDF Context
         if req.pdf_context:
             context_str += f"\n\n[DOCUMENT CONTEXT]:\n{req.pdf_context[:20000]}\n"
 
-        # 3. System Prompt (Quiz & Visuals)
+        # 3. System Prompt
         system_instruction = r"""
         You are Dynamo AI.
-        
         RULES:
         1. DEFAULT: Answer naturally in Markdown.
-        2. VISUALS: If asked for a "map", "chart", or "flow", use Mermaid.js code blocks (graph TD or xychart-beta).
-        
-        3. *** QUIZ MODE ***
-           If the user asks for a quiz/test:
-           - Output a ```json_quiz``` block.
-           - NO NEWLINES inside JSON strings. Use \n instead.
-           - FORMAT:
-           ```json_quiz
-           [
-             {"question": "Q1 text?", "options": ["A", "B", "C", "D"], "answer": 0, "explanation": "Exp text."}
-           ]
-           ```
-           - 'answer' must be the index number (0, 1, 2, 3).
+        2. VISUALS: If asked for a "map", "chart", or "flow", use Mermaid.js.
+        3. QUIZ: If asked for a quiz, output valid JSON inside ```json_quiz ... ``` blocks. No real newlines in strings.
         """
         
-        # 4. Construct History (THE FIX IS HERE)
         full_prompt = system_instruction + "\n" + context_str + "\n"
-        
         for msg in req.history[-6:]:
-            # FIX: We now check if it's a dictionary OR an object to prevent the crash
             role = msg.get('role', 'user') if isinstance(msg, dict) else getattr(msg, 'role', 'user')
             content = msg.get('content', '') if isinstance(msg, dict) else getattr(msg, 'content', '')
-            
             full_prompt += f"{'User' if role == 'user' else 'Model'}: {content}\n"
         
         full_prompt += f"User: {req.message}\nModel:"
 
-        # 5. Model Selection & Generation
         active_model = gemini_model
         if req.model == "gemini-1.5-pro":
              active_model = genai.GenerativeModel("gemini-1.5-pro")
@@ -113,18 +96,40 @@ async def chat_endpoint(req: ChatRequest):
         return {"type": "text", "content": response.text}
 
     except Exception as e:
-        print(f"Backend Crash: {e}") # This will show in Render logs
-        return {"type": "text", "content": f"System Error: {str(e)}"}
+        print(f"Backend Error: {e}")
+        return {"type": "text", "content": f"Error: {str(e)}"}
 
-# --- STUB ENDPOINTS (Required for frontend to not break) ---
-@app.post("/upload-pdf")
-async def upload_pdf(): return {"text": "PDF Upload Placeholder"}
-
-@app.post("/vision")
-async def vision_analysis(): return {"content": "Image Analysis Placeholder"}
-
+# --- REAL VOICE TRANSCRIPTION (FIXED) ---
 @app.post("/transcribe")
-async def transcribe_audio(): return {"text": "Transcription Placeholder"}
+async def transcribe_audio(file: UploadFile = File(...)):
+    if not gemini_model: return {"text": "Error: Gemini Key Missing"}
+    
+    try:
+        # 1. Save temp file
+        temp_filename = f"temp_{int(time.time())}.wav"
+        with open(temp_filename, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+            
+        # 2. Upload to Gemini
+        print(f"🎙️ Transcribing {temp_filename}...")
+        uploaded_file = genai.upload_file(temp_filename)
+        
+        # 3. Generate Transcript
+        response = gemini_model.generate_content([uploaded_file, "Transcribe this audio exactly as spoken."])
+        
+        # 4. Cleanup
+        os.remove(temp_filename)
+        
+        return {"text": response.text.strip()}
+    except Exception as e:
+        print(f"Transcription Error: {e}")
+        return {"text": "Error transcribing audio."}
+
+# --- Placeholders ---
+@app.post("/upload-pdf")
+async def upload_pdf(): return {"text": "PDF Upload Placeholder"} # Update this if you have the PDF logic ready
+@app.post("/vision")
+async def vision_analysis(): return {"content": "Image Analysis Placeholder"} # Update this if needed
 
 if __name__ == "__main__":
     import uvicorn
