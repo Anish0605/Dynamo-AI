@@ -1,4 +1,4 @@
-# main.py
+# main.py - Fixed for Mermaid Syntax & Quiz Keys
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,11 +20,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- API KEYS ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
 
-# --- INIT CLIENTS ---
 gemini_model = None
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
@@ -47,37 +45,44 @@ async def chat_endpoint(req: ChatRequest):
     if not gemini_model: raise HTTPException(500, "Gemini Key Missing")
     
     try:
-        # 1. Image Check
         if "image" in req.message.lower() and ("generate" in req.message.lower() or "create" in req.message.lower()):
             clean = req.message.replace(" ", "%20")
             return {"type": "image", "content": f"https://image.pollinations.ai/prompt/{clean}?nologo=true"}
 
-        # 2. Context
         context_str = ""
-        
-        # Web Search logic
-        if req.use_search and not req.pdf_context:
-            if tavily:
-                try:
-                    # print("🔍 Searching Web...") 
-                    depth = "advanced" if req.deep_dive else "basic"
-                    res = tavily.search(query=req.message, search_depth=depth, max_results=3)
-                    context_str += f"\n\n[WEB SEARCH RESULTS]:\n{res.get('results', [])}\n"
-                except Exception as e:
-                    print(f"Tavily Error: {e}")
-            else:
-                print("⚠️ Search requested but TAVILY_API_KEY not set.")
+        if req.use_search and not req.pdf_context and tavily:
+            try:
+                res = tavily.search(query=req.message, search_depth="advanced" if req.deep_dive else "basic", max_results=3)
+                context_str += f"\n\n[WEB]:\n{res.get('results', [])}\n"
+            except: pass
 
         if req.pdf_context:
-            context_str += f"\n\n[DOCUMENT CONTEXT]:\n{req.pdf_context[:20000]}\n"
+            context_str += f"\n\n[DOC]:\n{req.pdf_context[:20000]}\n"
 
-        # 3. System Prompt
+        # --- SYSTEM PROMPT (FIXED) ---
         system_instruction = r"""
         You are Dynamo AI.
+        
         RULES:
-        1. DEFAULT: Answer naturally in Markdown.
-        2. VISUALS: If asked for a "map", "chart", or "flow", use Mermaid.js.
-        3. QUIZ: If asked for a quiz, output valid JSON inside ```json_quiz ... ``` blocks. No real newlines in strings.
+        1. DEFAULT: Answer in Markdown.
+        
+        2. VISUALS (Mermaid.js):
+           - Use 'graph TD' for maps/processes.
+           - CRITICAL: You MUST wrap ALL node text in double quotes.
+             CORRECT: A["Solar System"] --> B["Earth"]
+             WRONG: A[Solar System] --> B[Earth]
+        
+        3. QUIZ MODE:
+           - Output valid JSON inside ```json_quiz ... ```.
+           - keys MUST be lowercase: "question", "options", "answer", "explanation".
+           - "answer" must be an integer index (0, 1, 2, 3).
+           
+           Example:
+           ```json_quiz
+           [
+             {"question": "Smallest planet?", "options": ["Mars", "Mercury"], "answer": 1, "explanation": "Mercury is smallest."}
+           ]
+           ```
         """
         
         full_prompt = system_instruction + "\n" + context_str + "\n"
@@ -89,47 +94,31 @@ async def chat_endpoint(req: ChatRequest):
         full_prompt += f"User: {req.message}\nModel:"
 
         active_model = gemini_model
-        if req.model == "gemini-1.5-pro":
-             active_model = genai.GenerativeModel("gemini-1.5-pro")
+        if req.model == "gemini-1.5-pro": active_model = genai.GenerativeModel("gemini-1.5-pro")
 
         response = active_model.generate_content(full_prompt)
         return {"type": "text", "content": response.text}
 
     except Exception as e:
-        print(f"Backend Error: {e}")
+        print(f"Error: {e}")
         return {"type": "text", "content": f"Error: {str(e)}"}
 
-# --- REAL VOICE TRANSCRIPTION (FIXED) ---
 @app.post("/transcribe")
 async def transcribe_audio(file: UploadFile = File(...)):
-    if not gemini_model: return {"text": "Error: Gemini Key Missing"}
-    
+    if not gemini_model: return {"text": "Gemini Key Missing"}
     try:
-        # 1. Save temp file
         temp_filename = f"temp_{int(time.time())}.wav"
-        with open(temp_filename, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-            
-        # 2. Upload to Gemini
-        print(f"🎙️ Transcribing {temp_filename}...")
+        with open(temp_filename, "wb") as buffer: shutil.copyfileobj(file.file, buffer)
         uploaded_file = genai.upload_file(temp_filename)
-        
-        # 3. Generate Transcript
-        response = gemini_model.generate_content([uploaded_file, "Transcribe this audio exactly as spoken."])
-        
-        # 4. Cleanup
+        response = gemini_model.generate_content([uploaded_file, "Transcribe exactly."])
         os.remove(temp_filename)
-        
         return {"text": response.text.strip()}
-    except Exception as e:
-        print(f"Transcription Error: {e}")
-        return {"text": "Error transcribing audio."}
+    except Exception: return {"text": "Error transcribing."}
 
-# --- Placeholders ---
 @app.post("/upload-pdf")
-async def upload_pdf(): return {"text": "PDF Upload Placeholder"} # Update this if you have the PDF logic ready
+async def upload_pdf(): return {"text": "PDF placeholder"}
 @app.post("/vision")
-async def vision_analysis(): return {"content": "Image Analysis Placeholder"} # Update this if needed
+async def vision_analysis(): return {"content": "Vision placeholder"}
 
 if __name__ == "__main__":
     import uvicorn
