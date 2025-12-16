@@ -115,7 +115,7 @@ class ReportRequest(BaseModel):
 def health_check():
     return {"status": "Dynamo Brain (Gemini 2.0) is Active 🧠"}
 
-# --- CHAT ENDPOINT (With Quiz Mode Added) ---
+# --- CHAT ENDPOINT (With Strict JSON Escaping Rules) ---
 @app.post("/chat")
 async def chat_endpoint(req: ChatRequest):
     if not gemini_model: raise HTTPException(500, "Gemini Key Missing")
@@ -135,37 +135,36 @@ async def chat_endpoint(req: ChatRequest):
             except: pass
         if req.pdf_context: context_str += f"\n\n[DOC]:\n{req.pdf_context}\n"
 
-        # 3. System Prompt (NOW WITH QUIZ MODE)
+        # 3. System Prompt (STRICTER JSON RULES)
         system_instruction = """
         You are Dynamo AI.
         
         CORE BEHAVIOR RULES:
         1. DEFAULT TO TEXT: Answer normal questions with text.
-        2. DIAGRAMS: Use 'graph TD' or 'xychart-beta' ONLY if asked to "visualize" or "chart".
+        2. DIAGRAMS: Use 'graph TD' or 'xychart-beta' ONLY if asked.
         
-        3. *** NEW: QUIZ MODE ***
-           If the user asks for a "quiz", "test", "exam", or "practice questions":
-           - DO NOT just list questions in text.
+        3. *** QUIZ MODE (STRICT JSON) ***
+           If the user asks for a "quiz", "test", or "practice":
            - GENERATE A HIDDEN JSON BLOCK wrapped in ```json_quiz ... ```.
-           - Format:
+           - CRITICAL RULE FOR CODE SNIPPETS:
+             If the question or options contain code (like Python, HTML, SQL):
+             1. You MUST escape all double quotes with a backslash (e.g., \\" ).
+             2. You MUST escape all backslashes (e.g., \\\\ ).
+             3. Do NOT use real newlines inside the strings; use \\n instead.
+           
+           - Target Format:
              ```json_quiz
              [
                {
-                 "question": "What is the capital of France?",
-                 "options": ["Berlin", "Madrid", "Paris", "Rome"],
-                 "answer": 2, 
-                 "explanation": "Paris is the capital of France."
-               },
-               {
-                 "question": "Next question...",
-                 "options": ["A", "B", "C", "D"],
-                 "answer": 0,
-                 "explanation": "Explanation here."
+                 "question": "What is the output of print(\\"Hello\\")?",
+                 "options": ["Hello", "Error", "None", "H"],
+                 "answer": 0, 
+                 "explanation": "The print function outputs the string to the console."
                }
              ]
              ```
-           - 'answer' is the Index (0 for A, 1 for B, etc).
-           - Generate 3-5 questions per request.
+           - 'answer' is the Index (0-3).
+           - Generate 3-5 questions.
         """
         
         full_prompt = system_instruction + "\n" + context_str + "\n"
