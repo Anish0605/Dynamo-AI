@@ -4,7 +4,9 @@ google-generativeai
 openai
 tavily-python
 python-multipart
-PyPDF2
+pypdf
+pillow
+python-dotenv
 pandas
 requests
 supabase
