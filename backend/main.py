@@ -1,11 +1,14 @@
-# main.py - Fixed for Mermaid Syntax & Quiz Keys
-from fastapi import FastAPI, HTTPException, UploadFile, File
+# main.py - Final Production (Real PDF & Vision Support)
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 import os
 import google.generativeai as genai
 from tavily import TavilyClient
 from dotenv import load_dotenv
+from pypdf import PdfReader
+from PIL import Image
+import io
 import shutil
 import time
 
@@ -20,6 +23,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# --- CONFIG ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
 
@@ -40,49 +44,42 @@ class ChatRequest(BaseModel):
     model: str = "gemini-2.0-flash"
     pdf_context: str = None
 
+# --- CHAT ENDPOINT ---
 @app.post("/chat")
 async def chat_endpoint(req: ChatRequest):
     if not gemini_model: raise HTTPException(500, "Gemini Key Missing")
     
     try:
+        # 1. Image Check
         if "image" in req.message.lower() and ("generate" in req.message.lower() or "create" in req.message.lower()):
             clean = req.message.replace(" ", "%20")
             return {"type": "image", "content": f"https://image.pollinations.ai/prompt/{clean}?nologo=true"}
 
+        # 2. Context Building
         context_str = ""
+        
+        # Web Search
         if req.use_search and not req.pdf_context and tavily:
             try:
                 res = tavily.search(query=req.message, search_depth="advanced" if req.deep_dive else "basic", max_results=3)
-                context_str += f"\n\n[WEB]:\n{res.get('results', [])}\n"
+                context_str += f"\n\n[WEB SEARCH RESULTS]:\n{res.get('results', [])}\n"
             except: pass
 
+        # PDF Context (Increased limit for Resumes)
         if req.pdf_context:
-            context_str += f"\n\n[DOC]:\n{req.pdf_context[:20000]}\n"
+            context_str += f"\n\n[USER DOCUMENT]:\n{req.pdf_context[:50000]}\n"
 
-        # --- SYSTEM PROMPT (FIXED) ---
+        # 3. System Prompt
         system_instruction = r"""
         You are Dynamo AI.
         
         RULES:
         1. DEFAULT: Answer in Markdown.
-        
-        2. VISUALS (Mermaid.js):
-           - Use 'graph TD' for maps/processes.
-           - CRITICAL: You MUST wrap ALL node text in double quotes.
-             CORRECT: A["Solar System"] --> B["Earth"]
-             WRONG: A[Solar System] --> B[Earth]
-        
-        3. QUIZ MODE:
-           - Output valid JSON inside ```json_quiz ... ```.
-           - keys MUST be lowercase: "question", "options", "answer", "explanation".
-           - "answer" must be an integer index (0, 1, 2, 3).
-           
-           Example:
-           ```json_quiz
-           [
-             {"question": "Smallest planet?", "options": ["Mars", "Mercury"], "answer": 1, "explanation": "Mercury is smallest."}
-           ]
-           ```
+        2. VISUALS: Use 'graph TD' or 'xychart-beta' ONLY if asked. 
+           CRITICAL: Wrap ALL node text in quotes. Example: A["Start"] --> B["End"]
+        3. QUIZ: Output valid JSON inside ```json_quiz ... ```.
+           Keys: "question", "options", "answer", "explanation".
+           "answer" must be an integer index (0-3).
         """
         
         full_prompt = system_instruction + "\n" + context_str + "\n"
@@ -103,6 +100,35 @@ async def chat_endpoint(req: ChatRequest):
         print(f"Error: {e}")
         return {"type": "text", "content": f"Error: {str(e)}"}
 
+# --- REAL PDF PARSER ---
+@app.post("/upload-pdf")
+async def upload_pdf(file: UploadFile = File(...)):
+    try:
+        reader = PdfReader(file.file)
+        text = ""
+        for page in reader.pages:
+            text += page.extract_text() + "\n"
+        
+        # Return extracted text so frontend can store it in 'currentPdfContext'
+        return {"text": text.strip()} 
+    except Exception as e:
+        print(f"PDF Error: {e}")
+        return {"text": "Error reading PDF. Please ensure it is a valid text PDF."}
+
+# --- REAL VISION ANALYZER ---
+@app.post("/vision")
+async def vision_analysis(file: UploadFile = File(...), message: str = Form("Describe this image")):
+    if not gemini_model: return {"content": "Gemini Key Missing"}
+    try:
+        contents = await file.read()
+        image = Image.open(io.BytesIO(contents))
+        response = gemini_model.generate_content([message, image])
+        return {"content": response.text}
+    except Exception as e:
+        print(f"Vision Error: {e}")
+        return {"content": "Error analyzing image."}
+
+# --- REAL AUDIO TRANSCRIBER ---
 @app.post("/transcribe")
 async def transcribe_audio(file: UploadFile = File(...)):
     if not gemini_model: return {"text": "Gemini Key Missing"}
@@ -114,11 +140,6 @@ async def transcribe_audio(file: UploadFile = File(...)):
         os.remove(temp_filename)
         return {"text": response.text.strip()}
     except Exception: return {"text": "Error transcribing."}
-
-@app.post("/upload-pdf")
-async def upload_pdf(): return {"text": "PDF placeholder"}
-@app.post("/vision")
-async def vision_analysis(): return {"content": "Vision placeholder"}
 
 if __name__ == "__main__":
     import uvicorn
