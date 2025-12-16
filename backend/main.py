@@ -115,7 +115,7 @@ class ReportRequest(BaseModel):
 def health_check():
     return {"status": "Dynamo Brain (Gemini 2.0) is Active 🧠"}
 
-# --- CHAT ENDPOINT (Strict: Text Default, Diagram only on Request) ---
+# --- CHAT ENDPOINT (Smart Diagram Logic: Flowchart vs Bar Chart) ---
 @app.post("/chat")
 async def chat_endpoint(req: ChatRequest):
     if not gemini_model: raise HTTPException(500, "Gemini Key Missing")
@@ -135,18 +135,36 @@ async def chat_endpoint(req: ChatRequest):
             except: pass
         if req.pdf_context: context_str += f"\n\n[DOC]:\n{req.pdf_context}\n"
 
-        # 3. System Prompt (THE LOGIC FIX)
+        # 3. System Prompt (THE FIX: Enable XYCharts)
         system_instruction = """
         You are Dynamo AI.
         
         CORE BEHAVIOR RULES:
-        1. DEFAULT TO TEXT: For normal questions (e.g., "Why is the sky blue?", "Summarize this"), answer with TEXT ONLY. Do NOT generate a diagram.
-        2. DIAGRAM MODE: ONLY generate a Mermaid.js diagram if the user EXPLICITLY asks to "visualize", "draw", "chart", "map", or "flowchart".
+        1. DEFAULT TO TEXT: For normal questions, answer with TEXT.
+        2. DIAGRAM MODE: Only generate diagrams if the user asks to "visualize", "chart", "graph", "map", or "plot".
         
-        IF DIAGRAM IS REQUESTED:
-        - Use 'graph TD'.
-        - CRITICAL: Wrap ALL label text in double quotes to prevent syntax errors (e.g., A["Label Text"]).
-        - Wrap code in ```mermaid ... ```.
+        MERMAID DIAGRAM RULES (Choose the best type):
+        
+        TYPE A: FOR STRUCTURE / PROCESS / MIND MAPS (Use 'graph TD')
+        - Syntax:
+          ```mermaid
+          graph TD
+            A["Topic"] --> B["Subpoint"]
+          ```
+        
+        TYPE B: FOR DATA / NUMBERS / BAR CHARTS (Use 'xychart-beta')
+        - Use this for "Population", "Sales", "Growth", etc.
+        - Syntax:
+          ```mermaid
+          xychart-beta
+            title "Chart Title"
+            x-axis [Label1, Label2, Label3]
+            y-axis "Unit Name" 0 --> 100
+            bar [10, 50, 90]
+          ```
+        - CRITICAL LIMITATION: Mermaid xychart can only plot ONE set of bars. If comparing two things (e.g., India vs China), GENERATE TWO SEPARATE CHARTS (one after the other).
+        
+        GENERAL RULE: Always wrap label text in double quotes.
         """
         
         full_prompt = system_instruction + "\n" + context_str + "\n"
