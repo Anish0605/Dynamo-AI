@@ -1,4 +1,4 @@
-# main.py - Production Ready (Bar Graph Syntax Fixed)
+# main.py - Final Production (Strict Separation of Quiz vs Visuals)
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -44,7 +44,7 @@ tavily = None
 if TAVILY_API_KEY:
     tavily = TavilyClient(api_key=TAVILY_API_KEY)
 
-# --- DATA MODELS ---
+# --- MODELS ---
 class ChatRequest(BaseModel):
     message: str
     history: list = []
@@ -62,12 +62,10 @@ async def chat_endpoint(req: ChatRequest):
     if not gemini_model: raise HTTPException(500, "Gemini Key Missing")
     
     try:
-        # 1. Image Check
         if "image" in req.message.lower() and ("generate" in req.message.lower() or "create" in req.message.lower()):
             clean = req.message.replace(" ", "%20")
             return {"type": "image", "content": f"https://image.pollinations.ai/prompt/{clean}?nologo=true"}
 
-        # 2. Context
         context_str = ""
         if req.use_search and not req.pdf_context and tavily:
             try:
@@ -78,30 +76,24 @@ async def chat_endpoint(req: ChatRequest):
         if req.pdf_context:
             context_str += f"\n\n[USER DOCUMENT]:\n{req.pdf_context[:50000]}\n"
 
-        # 3. SYSTEM PROMPT (Strict Visuals)
+        # --- SYSTEM PROMPT (STRICT MODE) ---
         system_instruction = r"""
         You are Dynamo AI.
         
-        RULES:
+        CORE RULES:
         1. DEFAULT: Answer in Markdown.
         
-        2. VISUALS (Mermaid.js):
-           - FLOWCHARTS: Use 'graph TD'. Wrap labels in quotes: A["Start"] --> B["End"]
-           - BAR CHARTS: Use 'xychart-beta'.
-             * CRITICAL: X-axis labels MUST be strings in quotes inside brackets.
-             * CRITICAL: Data MUST be numbers inside brackets.
-             * Example:
-               ```mermaid
-               xychart-beta
-               title "Population"
-               x-axis [ "India", "China", "USA" ]
-               y-axis "Millions" 0 --> 1500
-               bar [ 1400, 1300, 330 ]
-               ```
+        2. IF ASKED FOR VISUALS/MAPS/CHARTS:
+           - Use Mermaid.js.
+           - DO NOT output JSON.
+           - Flowcharts: `graph TD`. Wrap ALL labels in quotes: A["Label"] --> B["Label"].
+           - Bar Charts: `xychart-beta`. X-axis labels in quotes inside brackets.
         
-        3. QUIZ:
+        3. IF ASKED FOR A QUIZ/TEST:
+           - Use JSON Mode.
            - Output valid JSON inside ```json_quiz ... ```.
-           - Keys: "question", "options", "answer" (0-3), "explanation".
+           - Keys: "question", "options", "answer" (0-3 index), "explanation".
+           - DO NOT use Mermaid code in Quiz Mode.
         """
         
         full_prompt = system_instruction + "\n" + context_str + "\n"
@@ -119,7 +111,6 @@ async def chat_endpoint(req: ChatRequest):
         return {"type": "text", "content": response.text}
 
     except Exception as e:
-        print(f"Chat Error: {e}")
         return {"type": "text", "content": f"Error: {str(e)}"}
 
 # --- EXPORT ENDPOINTS ---
@@ -167,7 +158,7 @@ async def generate_pdf(req: ExportRequest):
     byte_io.seek(0)
     return StreamingResponse(byte_io, media_type="application/pdf", headers={"Content-Disposition": "attachment; filename=Dynamo_Report.pdf"})
 
-# --- FILES ---
+# --- MEDIA ENDPOINTS ---
 @app.post("/upload-pdf")
 async def upload_pdf(file: UploadFile = File(...)):
     try:
