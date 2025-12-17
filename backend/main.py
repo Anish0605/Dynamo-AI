@@ -1,4 +1,4 @@
-# main.py - Final Production (Visual Logic Fixed)
+# main.py - Final Production (Deep Dive & Strict Visuals Fixed)
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -67,42 +67,45 @@ async def chat_endpoint(req: ChatRequest):
             return {"type": "image", "content": f"https://image.pollinations.ai/prompt/{clean}?nologo=true"}
 
         context_str = ""
+        # Handle Search
         if req.use_search and not req.pdf_context and tavily:
             try:
-                res = tavily.search(query=req.message, search_depth="advanced" if req.deep_dive else "basic", max_results=3)
+                # Deep Dive affects Search Depth AND Prompt
+                search_depth = "advanced" if req.deep_dive else "basic"
+                res = tavily.search(query=req.message, search_depth=search_depth, max_results=5 if req.deep_dive else 3)
                 context_str += f"\n\n[WEB RESULTS]:\n{res.get('results', [])}\n"
             except: pass
 
         if req.pdf_context:
             context_str += f"\n\n[USER DOCUMENT]:\n{req.pdf_context[:50000]}\n"
 
-        # --- SYSTEM PROMPT (VISUAL LOGIC REFINED) ---
-        system_instruction = r"""
-        You are Dynamo AI.
+        # --- DYNAMIC SYSTEM PROMPT ---
         
-        CORE RULES:
-        1. DEFAULT: Answer in Markdown.
+        # 1. Base Personality
+        base_instruction = "You are Dynamo AI."
         
-        2. VISUALS (Mermaid.js) - CHOOSE THE RIGHT TYPE:
-           - IF comparing numbers, trends, statistics, or usage over time:
-             -> USE **BAR CHART** (`xychart-beta`).
-             -> Syntax: x-axis [ "Label1", "Label2" ] bar [ 10, 20 ]
-           
-           - IF showing hierarchy, process, systems, or relationships:
-             -> USE **FLOWCHART/MINDMAP** (`graph TD`).
-             -> Syntax: A["Node"] --> B["Node"] (Quote ALL labels).
-           
+        # 2. Deep Dive Mode Logic
+        if req.deep_dive:
+            base_instruction += " [MODE: DEEP DIVE] Provide extensive, detailed, and comprehensive answers. Use academic tone, explain complex concepts thoroughly, and cover multiple angles."
+        else:
+            base_instruction += " Answer concisely and clearly."
+
+        # 3. Visual & Quiz Rules
+        system_instruction = base_instruction + r"""
+        
+        RULES:
+        1. DEFAULT: Answer in Markdown. Do NOT generate a graph unless explicitly asked.
+        
+        2. VISUALS (STRICT: ONLY if user asks for 'map', 'chart', 'graph', 'diagram'):
+           - IF comparing numbers/trends: Use `xychart-beta`.
+             * x-axis labels in quotes inside brackets.
+           - IF showing structure/process: Use `graph TD`.
+             * Wrap ALL labels in quotes: A["Label"] --> B["Label"].
            - DO NOT output JSON for visuals.
         
         3. QUIZ (Priority for "Quiz", "Test", "Practice"):
-           - Use JSON ONLY.
-           - Format:
-             ```json_quiz
-             [
-               {"question": "Q1 text", "options": ["A", "B"], "answer": 0, "explanation": "Exp text"}
-             ]
-             ```
-           - DO NOT use Mermaid in Quiz mode.
+           - Output valid JSON inside ```json_quiz ... ```.
+           - Keys: "question", "options", "answer" (0-3), "explanation".
         """
         
         full_prompt = system_instruction + "\n" + context_str + "\n"
