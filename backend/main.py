@@ -200,6 +200,81 @@ async def transcribe_audio(file: UploadFile = File(...)):
         os.remove(temp)
         return {"text": response.text.strip()}
     except: return {"text": "Error transcribing."}
+# --- DYNAMO RADIO (PODCAST FEATURE) ---
+# Add this to the BOTTOM of main.py. It does not touch existing code.
+
+import edge_tts
+import asyncio
+import uuid
+
+# Simple function to clean text for audio
+def clean_for_audio(text):
+    return text.replace("*", "").replace("#", "").replace("-", "")
+
+@app.post("/generate-radio")
+async def generate_radio(req: ChatRequest):
+    if not gemini_model: raise HTTPException(500, "Gemini Key Missing")
+    
+    # 1. THE SCRIPTWRITER (Gemini)
+    # We ask Gemini to convert the complex text into a fun dialogue
+    script_prompt = f"""
+    You are a Podcast Producer. Convert the following text into a short, engaging conversation between two hosts: 
+    - "Alex" (The energetic host)
+    - "Sam" (The thoughtful expert)
+    
+    Rules:
+    - Keep it under 2 minutes.
+    - Make it sound natural (use "Wow", "I see", "Exactly").
+    - OUTPUT FORMAT: A raw JSON list ONLY. No markdown.
+    - Example: [ {{"speaker": "Alex", "text": "Hello!"}}, {{"speaker": "Sam", "text": "Hi!"}} ]
+    
+    TEXT TO ADAPT:
+    {req.pdf_context[:10000] if req.pdf_context else req.message}
+    """
+    
+    try:
+        # Generate Script
+        response = gemini_model.generate_content(script_prompt)
+        # Clean up json format if Gemini adds backticks
+        clean_json = response.text.replace("```json", "").replace("```", "").strip()
+        script = eval(clean_json) # Safely parse the list
+        
+        # 2. THE VOICE ACTORS (Edge TTS)
+        # We generate audio for each line
+        
+        # Files list to stitch later
+        audio_segments = []
+        
+        for line in script:
+            text = clean_for_audio(line["text"])
+            speaker = line["speaker"]
+            
+            # Select Voice
+            voice = "en-US-GuyNeural" if speaker == "Alex" else "en-US-AriaNeural"
+            
+            # Generate temporary file
+            temp_file = f"temp_{uuid.uuid4()}.mp3"
+            communicate = edge_tts.Communicate(text, voice)
+            await communicate.save(temp_file)
+            audio_segments.append(temp_file)
+            
+        # 3. THE EDITOR (Stitching)
+        # Since pydub/ffmpeg is hard on Render, we use a "Binary Append" hack
+        # MP3 files can often just be concatenated!
+        
+        final_filename = f"Dynamo_Radio_{int(time.time())}.mp3"
+        with open(final_filename, "wb") as outfile:
+            for segment in audio_segments:
+                with open(segment, "rb") as infile:
+                    outfile.write(infile.read())
+                os.remove(segment) # Clean up temp files
+                
+        # 4. Return the File
+        return FileResponse(final_filename, media_type="audio/mpeg", filename="Dynamo_Podcast.mp3")
+
+    except Exception as e:
+        print(f"Radio Error: {e}")
+        return {"error": str(e)}
 
 if __name__ == "__main__":
     import uvicorn
