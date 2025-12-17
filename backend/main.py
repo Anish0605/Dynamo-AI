@@ -1,4 +1,4 @@
-# main.py - Final Production (Strict Mode for Visuals vs Quiz)
+# main.py - Final Production (Visual Logic Fixed)
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -76,22 +76,23 @@ async def chat_endpoint(req: ChatRequest):
         if req.pdf_context:
             context_str += f"\n\n[USER DOCUMENT]:\n{req.pdf_context[:50000]}\n"
 
-        # --- SYSTEM PROMPT (STRICT VISUALS) ---
+        # --- SYSTEM PROMPT (VISUAL LOGIC REFINED) ---
         system_instruction = r"""
         You are Dynamo AI.
         
         CORE RULES:
         1. DEFAULT: Answer in Markdown.
         
-        2. VISUALS (Priority for "Mindmap", "Map", "Flowchart", "Graph"):
-           - Use Mermaid.js ONLY.
-           - DO NOT OUTPUT JSON.
-           - Format:
-             ```mermaid
-             graph TD
-               A["Main Concept"] --> B["Sub Concept"]
-             ```
-           - CRITICAL: Wrap ALL text labels in double quotes.
+        2. VISUALS (Mermaid.js) - CHOOSE THE RIGHT TYPE:
+           - IF comparing numbers, trends, statistics, or usage over time:
+             -> USE **BAR CHART** (`xychart-beta`).
+             -> Syntax: x-axis [ "Label1", "Label2" ] bar [ 10, 20 ]
+           
+           - IF showing hierarchy, process, systems, or relationships:
+             -> USE **FLOWCHART/MINDMAP** (`graph TD`).
+             -> Syntax: A["Node"] --> B["Node"] (Quote ALL labels).
+           
+           - DO NOT output JSON for visuals.
         
         3. QUIZ (Priority for "Quiz", "Test", "Practice"):
            - Use JSON ONLY.
