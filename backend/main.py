@@ -1,6 +1,6 @@
-# main.py - Final Production (Deep Dive & Strict Visuals Fixed)
+# main.py - Final Production (Dynamo Radio + All Features)
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 import os
@@ -12,6 +12,9 @@ from PIL import Image
 import io
 import shutil
 import time
+import uuid
+import edge_tts 
+import asyncio
 
 # --- REPORT GENERATION IMPORTS ---
 from docx import Document
@@ -62,50 +65,44 @@ async def chat_endpoint(req: ChatRequest):
     if not gemini_model: raise HTTPException(500, "Gemini Key Missing")
     
     try:
+        # 1. Image Check
         if "image" in req.message.lower() and ("generate" in req.message.lower() or "create" in req.message.lower()):
             clean = req.message.replace(" ", "%20")
             return {"type": "image", "content": f"https://image.pollinations.ai/prompt/{clean}?nologo=true"}
 
+        # 2. Context
         context_str = ""
-        # Handle Search
         if req.use_search and not req.pdf_context and tavily:
             try:
-                # Deep Dive affects Search Depth AND Prompt
-                search_depth = "advanced" if req.deep_dive else "basic"
-                res = tavily.search(query=req.message, search_depth="advanced" if req.deep_dive else "basic", max_results=5)
+                # Deep Dive Logic
+                depth = "advanced" if req.deep_dive else "basic"
+                res = tavily.search(query=req.message, search_depth=depth, max_results=5)
                 context_str += f"\n\n[WEB RESULTS]:\n{res.get('results', [])}\n"
             except: pass
 
         if req.pdf_context:
             context_str += f"\n\n[USER DOCUMENT]:\n{req.pdf_context[:50000]}\n"
 
-        # --- DYNAMIC SYSTEM PROMPT ---
-        
-        # 1. Base Personality
+        # 3. System Prompt
         base_instruction = "You are Dynamo AI."
-        
-        # 2. Deep Dive Mode Logic
         if req.deep_dive:
-            base_instruction += " [MODE: DEEP DIVE] Provide extensive, detailed, and comprehensive answers. Use academic tone, explain complex concepts thoroughly, and cover multiple angles."
-        else:
-            base_instruction += " Answer concisely and clearly."
-
-        # 3. Visual & Quiz Rules
+            base_instruction += " [MODE: DEEP DIVE] Provide extensive, detailed, research-grade answers."
+        
         system_instruction = base_instruction + r"""
         
         RULES:
-        1. DEFAULT: Answer in Markdown. Do NOT generate a graph unless explicitly asked.
+        1. DEFAULT: Answer in Markdown.
         
-        2. VISUALS (STRICT: ONLY if user asks for 'map', 'chart', 'graph', 'diagram'):
-           - IF comparing numbers/trends: Use `xychart-beta`.
-             * x-axis labels in quotes inside brackets.
+        2. VISUALS (Explicit Request Only):
+           - IF comparing numbers/trends: Use `xychart-beta`. 
+             * x-axis labels in quotes: [ "A", "B" ]. Data in brackets: [10, 20].
            - IF showing structure/process: Use `graph TD`.
-             * Wrap ALL labels in quotes: A["Label"] --> B["Label"].
-           - DO NOT output JSON for visuals.
+             * Quotes around labels: A["Start"] --> B["End"].
+           - NO JSON for visuals.
         
-        3. QUIZ (Priority for "Quiz", "Test", "Practice"):
+        3. QUIZ (Explicit Request Only):
            - Output valid JSON inside ```json_quiz ... ```.
-           - Keys: "question", "options", "answer" (0-3), "explanation".
+           - Keys: "question", "options", "answer", "explanation".
         """
         
         full_prompt = system_instruction + "\n" + context_str + "\n"
@@ -124,6 +121,50 @@ async def chat_endpoint(req: ChatRequest):
 
     except Exception as e:
         return {"type": "text", "content": f"Error: {str(e)}"}
+
+# --- DYNAMO RADIO ENDPOINT (NEW) ---
+@app.post("/generate-radio")
+async def generate_radio(req: ChatRequest):
+    if not gemini_model: raise HTTPException(500, "Gemini Key Missing")
+    
+    # 1. Scriptwriter
+    prompt = f"""
+    Convert this text into a 2-person podcast script between 'Host' (Alex) and 'Expert' (Sam).
+    - Keep it short (max 6 exchanges).
+    - Make it conversational and punchy.
+    - OUTPUT: A raw JSON list ONLY. No markdown.
+    - Format: [ {{"speaker": "Host", "text": "..."}}, {{"speaker": "Expert", "text": "..."}} ]
+    
+    CONTENT: {req.pdf_context[:10000] if req.pdf_context else req.message}
+    """
+    
+    try:
+        resp = gemini_model.generate_content(prompt)
+        clean_json = resp.text.replace("```json", "").replace("```", "").strip()
+        script = eval(clean_json) # Safe parsing of list
+        
+        # 2. Voice Generation
+        audio_files = []
+        for line in script:
+            voice = "en-US-GuyNeural" if line["speaker"] == "Host" else "en-US-AriaNeural"
+            temp = f"temp_{uuid.uuid4()}.mp3"
+            communicate = edge_tts.Communicate(line["text"], voice)
+            await communicate.save(temp)
+            audio_files.append(temp)
+            
+        # 3. Stitching (Binary Append Method)
+        output_filename = f"Dynamo_Podcast_{int(time.time())}.mp3"
+        with open(output_filename, "wb") as outfile:
+            for f in audio_files:
+                with open(f, "rb") as infile:
+                    outfile.write(infile.read())
+                os.remove(f) # Cleanup chunks
+                
+        return FileResponse(output_filename, media_type="audio/mpeg", filename="Dynamo_Podcast.mp3")
+
+    except Exception as e:
+        print(f"Radio Error: {e}")
+        return {"error": str(e)}
 
 # --- EXPORT ENDPOINTS ---
 @app.post("/generate-word")
@@ -170,7 +211,7 @@ async def generate_pdf(req: ExportRequest):
     byte_io.seek(0)
     return StreamingResponse(byte_io, media_type="application/pdf", headers={"Content-Disposition": "attachment; filename=Dynamo_Report.pdf"})
 
-# --- MEDIA ENDPOINTS ---
+# --- FILES ---
 @app.post("/upload-pdf")
 async def upload_pdf(file: UploadFile = File(...)):
     try:
@@ -200,81 +241,6 @@ async def transcribe_audio(file: UploadFile = File(...)):
         os.remove(temp)
         return {"text": response.text.strip()}
     except: return {"text": "Error transcribing."}
-# --- DYNAMO RADIO (PODCAST FEATURE) ---
-# Add this to the BOTTOM of main.py. It does not touch existing code.
-
-import edge_tts
-import asyncio
-import uuid
-
-# Simple function to clean text for audio
-def clean_for_audio(text):
-    return text.replace("*", "").replace("#", "").replace("-", "")
-
-@app.post("/generate-radio")
-async def generate_radio(req: ChatRequest):
-    if not gemini_model: raise HTTPException(500, "Gemini Key Missing")
-    
-    # 1. THE SCRIPTWRITER (Gemini)
-    # We ask Gemini to convert the complex text into a fun dialogue
-    script_prompt = f"""
-    You are a Podcast Producer. Convert the following text into a short, engaging conversation between two hosts: 
-    - "Alex" (The energetic host)
-    - "Sam" (The thoughtful expert)
-    
-    Rules:
-    - Keep it under 2 minutes.
-    - Make it sound natural (use "Wow", "I see", "Exactly").
-    - OUTPUT FORMAT: A raw JSON list ONLY. No markdown.
-    - Example: [ {{"speaker": "Alex", "text": "Hello!"}}, {{"speaker": "Sam", "text": "Hi!"}} ]
-    
-    TEXT TO ADAPT:
-    {req.pdf_context[:10000] if req.pdf_context else req.message}
-    """
-    
-    try:
-        # Generate Script
-        response = gemini_model.generate_content(script_prompt)
-        # Clean up json format if Gemini adds backticks
-        clean_json = response.text.replace("```json", "").replace("```", "").strip()
-        script = eval(clean_json) # Safely parse the list
-        
-        # 2. THE VOICE ACTORS (Edge TTS)
-        # We generate audio for each line
-        
-        # Files list to stitch later
-        audio_segments = []
-        
-        for line in script:
-            text = clean_for_audio(line["text"])
-            speaker = line["speaker"]
-            
-            # Select Voice
-            voice = "en-US-GuyNeural" if speaker == "Alex" else "en-US-AriaNeural"
-            
-            # Generate temporary file
-            temp_file = f"temp_{uuid.uuid4()}.mp3"
-            communicate = edge_tts.Communicate(text, voice)
-            await communicate.save(temp_file)
-            audio_segments.append(temp_file)
-            
-        # 3. THE EDITOR (Stitching)
-        # Since pydub/ffmpeg is hard on Render, we use a "Binary Append" hack
-        # MP3 files can often just be concatenated!
-        
-        final_filename = f"Dynamo_Radio_{int(time.time())}.mp3"
-        with open(final_filename, "wb") as outfile:
-            for segment in audio_segments:
-                with open(segment, "rb") as infile:
-                    outfile.write(infile.read())
-                os.remove(segment) # Clean up temp files
-                
-        # 4. Return the File
-        return FileResponse(final_filename, media_type="audio/mpeg", filename="Dynamo_Podcast.mp3")
-
-    except Exception as e:
-        print(f"Radio Error: {e}")
-        return {"error": str(e)}
 
 if __name__ == "__main__":
     import uvicorn
