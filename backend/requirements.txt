@@ -16,3 +16,5 @@ razorpay
 reportlab
 python-docx
 python-pptx
+edge-tts
+pydub
