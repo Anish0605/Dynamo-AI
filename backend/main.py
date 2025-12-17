@@ -72,7 +72,7 @@ async def chat_endpoint(req: ChatRequest):
             try:
                 # Deep Dive affects Search Depth AND Prompt
                 search_depth = "advanced" if req.deep_dive else "basic"
-                res = tavily.search(query=req.message, search_depth=search_depth, max_results=5 if req.deep_dive else 3)
+                res = tavily.search(query=req.message, search_depth="advanced" if req.deep_dive else "basic", max_results=5)
                 context_str += f"\n\n[WEB RESULTS]:\n{res.get('results', [])}\n"
             except: pass
 
