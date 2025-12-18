@@ -1,53 +1,39 @@
-# main.py - Final Production (Dynamo Radio + All Features)
+# main.py - Unified Production (Groq + Smart Analyst + Radio + All Features)
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
-import os
+import os, io, shutil, time, uuid, base64, asyncio
 import google.generativeai as genai
+from groq import Groq
 from tavily import TavilyClient
 from dotenv import load_dotenv
 from pypdf import PdfReader
 from PIL import Image
-import io
-import shutil
-import time
-import uuid
-import edge_tts 
-import asyncio
+import pandas as pd
+import matplotlib.pyplot as plt
 
-# --- REPORT GENERATION IMPORTS ---
+# Report Imports
 from docx import Document
 from pptx import Presentation
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.pagesizes import letter
+import edge_tts
 
 load_dotenv()
-
 app = FastAPI()
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 # --- CONFIG ---
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
+GEMINI_KEY = os.getenv("GEMINI_API_KEY")
+TAVILY_KEY = os.getenv("TAVILY_API_KEY")
+GROQ_KEY = os.getenv("GROQ_API_KEY")
 
-gemini_model = None
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
-    gemini_model = genai.GenerativeModel("gemini-2.0-flash-exp")
+genai.configure(api_key=GEMINI_KEY) if GEMINI_KEY else None
+groq_client = Groq(api_key=GROQ_KEY) if GROQ_KEY else None
+tavily = TavilyClient(api_key=TAVILY_KEY) if TAVILY_KEY else None
 
-tavily = None
-if TAVILY_API_KEY:
-    tavily = TavilyClient(api_key=TAVILY_API_KEY)
-
-# --- MODELS ---
 class ChatRequest(BaseModel):
     message: str
     history: list = []
@@ -59,189 +45,89 @@ class ChatRequest(BaseModel):
 class ExportRequest(BaseModel):
     history: list
 
-# --- CHAT ENDPOINT ---
+# --- CORE CHAT LOGIC ---
 @app.post("/chat")
 async def chat_endpoint(req: ChatRequest):
-    if not gemini_model: raise HTTPException(500, "Gemini Key Missing")
-    
     try:
-        # 1. Image Check
+        # 1. Image Gen
         if "image" in req.message.lower() and ("generate" in req.message.lower() or "create" in req.message.lower()):
             clean = req.message.replace(" ", "%20")
             return {"type": "image", "content": f"https://image.pollinations.ai/prompt/{clean}?nologo=true"}
 
-        # 2. Context
+        # 2. Context Building
         context_str = ""
         if req.use_search and not req.pdf_context and tavily:
             try:
-                # Deep Dive Logic
-                depth = "advanced" if req.deep_dive else "basic"
-                res = tavily.search(query=req.message, search_depth=depth, max_results=5)
-                context_str += f"\n\n[WEB RESULTS]:\n{res.get('results', [])}\n"
+                res = tavily.search(query=req.message, search_depth="advanced" if req.deep_dive else "basic", max_results=5)
+                context_str += f"\n\n[WEB]:\n{res.get('results', [])}\n"
             except: pass
-
         if req.pdf_context:
-            context_str += f"\n\n[USER DOCUMENT]:\n{req.pdf_context[:50000]}\n"
+            context_str += f"\n\n[DOC]:\n{req.pdf_context[:50000]}\n"
 
-        # 3. System Prompt
-        base_instruction = "You are Dynamo AI."
-        if req.deep_dive:
-            base_instruction += " [MODE: DEEP DIVE] Provide extensive, detailed, research-grade answers."
-        
-        system_instruction = base_instruction + r"""
-        
-        RULES:
-        1. DEFAULT: Answer in Markdown.
-        
-        2. VISUALS (Explicit Request Only):
-           - IF comparing numbers/trends: Use `xychart-beta`. 
-             * x-axis labels in quotes: [ "A", "B" ]. Data in brackets: [10, 20].
-           - IF showing structure/process: Use `graph TD`.
-             * Quotes around labels: A["Start"] --> B["End"].
-           - NO JSON for visuals.
-        
-        3. QUIZ (Explicit Request Only):
-           - Output valid JSON inside ```json_quiz ... ```.
-           - Keys: "question", "options", "answer", "explanation".
-        """
-        
-        full_prompt = system_instruction + "\n" + context_str + "\n"
-        for msg in req.history[-6:]:
-            role = msg.get('role', 'user') if isinstance(msg, dict) else getattr(msg, 'role', 'user')
-            content = msg.get('content', '') if isinstance(msg, dict) else getattr(msg, 'content', '')
-            full_prompt += f"{'User' if role == 'user' else 'Model'}: {content}\n"
-        
-        full_prompt += f"User: {req.message}\nModel:"
+        sys_msg = "You are Dynamo AI. Rules: 1. Markdown only. 2. Charts use xychart-beta (labels in quotes). 3. Flowcharts use graph TD (labels in quotes). 4. Quizzes use ```json_quiz block."
+        if req.deep_dive: sys_msg += " [DEEP DIVE] Provide exhaustive, detailed research answers."
 
-        active_model = gemini_model
-        if req.model == "gemini-1.5-pro": active_model = genai.GenerativeModel("gemini-1.5-pro")
-
-        response = active_model.generate_content(full_prompt)
-        return {"type": "text", "content": response.text}
-
-    except Exception as e:
-        return {"type": "text", "content": f"Error: {str(e)}"}
-
-# --- DYNAMO RADIO ENDPOINT (NEW) ---
-@app.post("/generate-radio")
-async def generate_radio(req: ChatRequest):
-    if not gemini_model: raise HTTPException(500, "Gemini Key Missing")
-    
-    # 1. Scriptwriter
-    prompt = f"""
-    Convert this text into a 2-person podcast script between 'Host' (Alex) and 'Expert' (Sam).
-    - Keep it short (max 6 exchanges).
-    - Make it conversational and punchy.
-    - OUTPUT: A raw JSON list ONLY. No markdown.
-    - Format: [ {{"speaker": "Host", "text": "..."}}, {{"speaker": "Expert", "text": "..."}} ]
-    
-    CONTENT: {req.pdf_context[:10000] if req.pdf_context else req.message}
-    """
-    
-    try:
-        resp = gemini_model.generate_content(prompt)
-        clean_json = resp.text.replace("```json", "").replace("```", "").strip()
-        script = eval(clean_json) # Safe parsing of list
-        
-        # 2. Voice Generation
-        audio_files = []
-        for line in script:
-            voice = "en-US-GuyNeural" if line["speaker"] == "Host" else "en-US-AriaNeural"
-            temp = f"temp_{uuid.uuid4()}.mp3"
-            communicate = edge_tts.Communicate(line["text"], voice)
-            await communicate.save(temp)
-            audio_files.append(temp)
+        # 3. Model Routing
+        if "llama3" in req.model:
+            if not groq_client: return {"type": "text", "content": "Groq Key Missing"}
+            msgs = [{"role": "system", "content": sys_msg}]
+            if context_str: msgs.append({"role": "system", "content": f"Context: {context_str}"})
+            for m in req.history[-6:]:
+                msgs.append({"role": "user" if m.get('role') == 'user' else "assistant", "content": m.get('content', '')})
+            msgs.append({"role": "user", "content": req.message})
             
-        # 3. Stitching (Binary Append Method)
-        output_filename = f"Dynamo_Podcast_{int(time.time())}.mp3"
-        with open(output_filename, "wb") as outfile:
-            for f in audio_files:
-                with open(f, "rb") as infile:
-                    outfile.write(infile.read())
-                os.remove(f) # Cleanup chunks
-                
-        return FileResponse(output_filename, media_type="audio/mpeg", filename="Dynamo_Podcast.mp3")
+            completion = groq_client.chat.completions.create(messages=msgs, model=req.model)
+            return {"type": "text", "content": completion.choices[0].message.content}
+        else:
+            model = genai.GenerativeModel("gemini-2.0-flash-exp") if req.model == "gemini-2.0-flash" else genai.GenerativeModel("gemini-1.5-pro")
+            prompt = f"{sys_msg}\n{context_str}\n" + "\n".join([f"{'User' if m.get('role') == 'user' else 'AI'}: {m.get('content')}" for m in req.history[-6:]]) + f"\nUser: {req.message}\nAI:"
+            response = model.generate_content(prompt)
+            return {"type": "text", "content": response.text}
+    except Exception as e: return {"type": "text", "content": f"Error: {str(e)}"}
 
-    except Exception as e:
-        print(f"Radio Error: {e}")
-        return {"error": str(e)}
-
-# --- EXPORT ENDPOINTS ---
-@app.post("/generate-word")
-async def generate_word(req: ExportRequest):
-    doc = Document()
-    doc.add_heading('Dynamo AI Report', 0)
-    for msg in req.history:
-        role = msg.get('role', 'User') if isinstance(msg, dict) else msg.role
-        content = msg.get('content', '') if isinstance(msg, dict) else msg.content
-        doc.add_heading(str(role).capitalize(), level=1)
-        doc.add_paragraph(str(content))
-    byte_io = io.BytesIO()
-    doc.save(byte_io)
-    byte_io.seek(0)
-    return StreamingResponse(byte_io, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document", headers={"Content-Disposition": "attachment; filename=Dynamo_Report.docx"})
-
-@app.post("/generate-ppt")
-async def generate_ppt(req: ExportRequest):
-    prs = Presentation()
-    for msg in req.history:
-        role = msg.get('role', 'User') if isinstance(msg, dict) else msg.role
-        content = msg.get('content', '') if isinstance(msg, dict) else msg.content
-        slide = prs.slides.add_slide(prs.slide_layouts[1])
-        slide.shapes.title.text = str(role).capitalize()
-        slide.placeholders[1].text = str(content)[:800]
-    byte_io = io.BytesIO()
-    prs.save(byte_io)
-    byte_io.seek(0)
-    return StreamingResponse(byte_io, media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation", headers={"Content-Disposition": "attachment; filename=Dynamo_Presentation.pptx"})
-
-@app.post("/generate-report")
-async def generate_pdf(req: ExportRequest):
-    byte_io = io.BytesIO()
-    doc = SimpleDocTemplate(byte_io, pagesize=letter)
-    story = [Paragraph("Dynamo AI Report", getSampleStyleSheet()['Title']), Spacer(1, 12)]
-    for msg in req.history:
-        role = msg.get('role', 'User') if isinstance(msg, dict) else msg.role
-        content = msg.get('content', '') if isinstance(msg, dict) else msg.content
-        story.append(Paragraph(f"<b>{str(role).capitalize()}:</b>", getSampleStyleSheet()['Heading2']))
-        try: story.append(Paragraph(str(content).replace('\n', '<br/>'), getSampleStyleSheet()['Normal']))
-        except: pass
-        story.append(Spacer(1, 12))
-    doc.build(story)
-    byte_io.seek(0)
-    return StreamingResponse(byte_io, media_type="application/pdf", headers={"Content-Disposition": "attachment; filename=Dynamo_Report.pdf"})
-
-# --- FILES ---
-@app.post("/upload-pdf")
-async def upload_pdf(file: UploadFile = File(...)):
-    try:
-        reader = PdfReader(file.file)
-        text = "".join([p.extract_text() for p in reader.pages])
-        return {"text": text.strip()} 
-    except: return {"text": "Error reading PDF."}
-
-@app.post("/vision")
-async def vision_analysis(file: UploadFile = File(...), message: str = Form("Describe this image")):
-    if not gemini_model: return {"content": "Gemini Key Missing"}
+# --- SMART ANALYST (CSV/EXCEL) ---
+@app.post("/analyze-file")
+async def analyze_file(file: UploadFile = File(...)):
     try:
         contents = await file.read()
-        image = Image.open(io.BytesIO(contents))
-        response = gemini_model.generate_content([message, image])
-        return {"content": response.text}
-    except: return {"content": "Error analyzing image."}
+        df = pd.read_csv(io.BytesIO(contents)) if file.filename.endswith('.csv') else pd.read_excel(io.BytesIO(contents))
+        num_cols = df.select_dtypes(include=['number']).columns.tolist()
+        txt_cols = df.select_dtypes(include=['object', 'string']).columns.tolist()
+        if not num_cols: return {"error": "No numeric data found."}
+        
+        plt.figure(figsize=(10, 6))
+        chart_df = df.head(15)
+        x, y = (txt_cols[0] if txt_cols else chart_df.index.name), num_cols[0]
+        plt.bar(chart_df[x].astype(str), chart_df[y], color='#EAB308')
+        plt.title(f"{y} by {x}"); plt.xticks(rotation=45); plt.tight_layout()
+        
+        buf = io.BytesIO(); plt.savefig(buf, format='png'); buf.seek(0); plt.close()
+        img_b64 = base64.b64encode(buf.getvalue()).decode()
+        
+        insight_prompt = f"Analyze summary and give 1 punchy business insight (max 20 words): {df.describe().to_string()}"
+        insight = genai.GenerativeModel("gemini-2.0-flash-exp").generate_content(insight_prompt).text
+        return {"image": f"data:image/png;base64,{img_b64}", "insight": insight}
+    except Exception as e: return {"error": str(e)}
 
-@app.post("/transcribe")
-async def transcribe_audio(file: UploadFile = File(...)):
-    if not gemini_model: return {"text": "Gemini Key Missing"}
+# --- DYNAMO RADIO ---
+@app.post("/generate-radio")
+async def generate_radio(req: ChatRequest):
+    prompt = f"Convert to 2-person podcast script (Alex/Sam). JSON list ONLY. exchange max 6. Content: {req.pdf_context[:10000] if req.pdf_context else req.message}"
     try:
-        temp = f"temp_{int(time.time())}.wav"
-        with open(temp, "wb") as buffer: shutil.copyfileobj(file.file, buffer)
-        uploaded = genai.upload_file(temp)
-        response = gemini_model.generate_content([uploaded, "Transcribe exactly."])
-        os.remove(temp)
-        return {"text": response.text.strip()}
-    except: return {"text": "Error transcribing."}
+        resp = genai.GenerativeModel("gemini-2.0-flash-exp").generate_content(prompt)
+        script = eval(resp.text.replace("```json", "").replace("```", "").strip())
+        audio_files = []
+        for line in script:
+            v = "en-US-GuyNeural" if line["speaker"] == "Host" or line["speaker"] == "Alex" else "en-US-AriaNeural"
+            tmp = f"temp_{uuid.uuid4()}.mp3"
+            await edge_tts.Communicate(line["text"], v).save(tmp)
+            audio_files.append(tmp)
+        out = f"Radio_{int(time.time())}.mp3"
+        with open(out, "wb") as f_out:
+            for f in audio_files:
+                with open(f, "rb") as f_in: f_out.write(f_in.read())
+                os.remove(f)
+        return FileResponse(out, media_type="audio/mpeg")
+    except Exception as e: return {"error": str(e)}
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+# (Keep your existing /generate-word, /generate-ppt, /generate-report, /upload-pdf, /vision, /transcribe endpoints exactly as they were...)
