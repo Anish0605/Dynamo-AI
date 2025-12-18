@@ -8,6 +8,7 @@ pypdf
 pillow
 python-dotenv
 pandas
+matplotlib
 requests
 supabase
 firebase-admin
@@ -18,3 +19,5 @@ python-docx
 python-pptx
 edge-tts
 pydub
+groq
+openpyxl
