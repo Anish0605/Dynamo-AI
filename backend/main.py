@@ -1,49 +1,46 @@
-from fastapi import FastAPI, Request
-from supabase_client import supabase
-from datetime import datetime
-import uuid
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+import requests, os
+from export import router as export_router
 
 app = FastAPI()
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(export_router)
+
+GEMINI_KEY = os.getenv("GEMINI_API_KEY")
+
+class ChatReq(BaseModel):
+    message: str
+    model: str = "gemini-2.0-flash"
+    deep_dive: bool = False
+    search: bool = False
+
+def gemini(prompt, model):
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_KEY}"
+    payload = {"contents":[{"parts":[{"text":prompt}]}]}
+    r = requests.post(url, json=payload)
+    try:
+        return r.json()["candidates"][0]["content"]["parts"][0]["text"]
+    except:
+        return "No response"
+
 @app.post("/chat")
-async def chat(request: Request):
-    body = await request.json()
+def chat(req: ChatReq):
+    if not req.deep_dive:
+        return {"reply": gemini(req.message, req.model)}
 
-    user_id = body.get("user_id")        # supabase user id
-    chat_id = body.get("chat_id")        # optional
-    message = body.get("message")
-
-    if not user_id or not message:
-        return {"error": "Missing user_id or message"}
-
-    # 1️⃣ Create chat if not exists
-    if not chat_id:
-        chat_id = str(uuid.uuid4())
-        supabase.table("chats").insert({
-            "id": chat_id,
-            "user_id": user_id,
-            "title": message[:40],
-            "created_at": datetime.utcnow().isoformat()
-        }).execute()
-
-    # 2️⃣ Save user message
-    supabase.table("messages").insert({
-        "chat_id": chat_id,
-        "role": "user",
-        "content": message
-    }).execute()
-
-    # 3️⃣ AI RESPONSE (replace with Gemini/Groq call)
-    ai_reply = f"I received your message: {message}"
-
-    # 4️⃣ Save assistant message
-    supabase.table("messages").insert({
-        "chat_id": chat_id,
-        "role": "assistant",
-        "content": ai_reply
-    }).execute()
+    answers = []
+    for i in range(3):
+        answers.append(gemini(f"Perspective {i+1}: {req.message}", req.model))
 
     return {
-        "chat_id": chat_id,
-        "reply": ai_reply
+        "reply": "\n\n---\n\n".join(answers)
     }
