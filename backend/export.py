@@ -1,33 +1,40 @@
 from fastapi import APIRouter, Body
-import io, os
+import io
+import os
 from datetime import datetime
 
+# PDF
 from reportlab.platypus import (
-    SimpleDocTemplate, Paragraph, Spacer, Image, PageBreak
+    SimpleDocTemplate,
+    Paragraph,
+    Spacer,
+    Image,
+    PageBreak
 )
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import inch
 
+# WORD
 from docx import Document
 from docx.shared import Inches, Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
+# PPT
 from pptx import Presentation
 from pptx.util import Inches, Pt
 
 router = APIRouter(prefix="/export", tags=["Export"])
 
 # =========================
-# BRAND CONFIG
+# PATH + BRAND CONFIG
 # =========================
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+LOGO_PATH = os.path.join(BASE_DIR, "assets", "logo.png")
+
 BRAND_NAME = "Dynamo AI"
 TAGLINE = "Power Your Curiosity"
 DATE_STR = datetime.now().strftime("%d %b %Y")
-
-# Place your logo here
-LOGO_PATH = "assets/logo.png"   # <-- put your logo here (png)
-
 
 # =========================
 # HELPER
@@ -37,12 +44,11 @@ def format_messages(messages):
     for m in messages:
         role = m.get("role", "").upper()
         content = m.get("content", "")
-        blocks.append(f"{role}:\n{content}")
+        blocks.append(f"{role}\n{content}")
     return "\n\n".join(blocks)
 
-
 # =========================
-# PDF EXPORT (PREMIUM)
+# PDF EXPORT
 # =========================
 @router.post("/pdf")
 def export_pdf(payload: dict = Body(...)):
@@ -62,8 +68,8 @@ def export_pdf(payload: dict = Body(...)):
     title_style = ParagraphStyle(
         "Title",
         fontSize=22,
-        spaceAfter=14,
-        alignment=1
+        alignment=1,
+        spaceAfter=14
     )
 
     meta_style = ParagraphStyle(
@@ -77,14 +83,14 @@ def export_pdf(payload: dict = Body(...)):
     body_style = ParagraphStyle(
         "Body",
         fontSize=12,
-        spaceAfter=12
+        spaceAfter=10
     )
 
     story = []
 
-    # ---- Cover Page ----
+    # ---- COVER PAGE ----
     if os.path.exists(LOGO_PATH):
-        story.append(Image(LOGO_PATH, width=2*inch, height=2*inch))
+        story.append(Image(LOGO_PATH, width=2.2 * inch, height=2.2 * inch))
         story.append(Spacer(1, 20))
 
     story.append(Paragraph(BRAND_NAME, title_style))
@@ -92,7 +98,7 @@ def export_pdf(payload: dict = Body(...)):
     story.append(Paragraph(f"Generated on {DATE_STR}", meta_style))
     story.append(PageBreak())
 
-    # ---- Content ----
+    # ---- CONTENT ----
     messages = payload.get("messages", [])
     text = format_messages(messages)
 
@@ -103,22 +109,21 @@ def export_pdf(payload: dict = Body(...)):
     doc.build(story)
     return {"file": buffer.getvalue().hex()}
 
-
 # =========================
-# WORD EXPORT (PREMIUM)
+# WORD EXPORT
 # =========================
 @router.post("/docx")
 def export_docx(payload: dict = Body(...)):
     doc = Document()
 
-    # ---- Logo ----
+    # ---- LOGO ----
     if os.path.exists(LOGO_PATH):
         p = doc.add_paragraph()
         run = p.add_run()
         run.add_picture(LOGO_PATH, width=Inches(2))
         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-    # ---- Branding ----
+    # ---- BRANDING ----
     h = doc.add_heading(BRAND_NAME, 0)
     h.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
@@ -130,7 +135,7 @@ def export_docx(payload: dict = Body(...)):
 
     doc.add_page_break()
 
-    # ---- Content ----
+    # ---- CONTENT ----
     messages = payload.get("messages", [])
     for m in messages:
         role = m.get("role", "").upper()
@@ -147,28 +152,28 @@ def export_docx(payload: dict = Body(...)):
     doc.save(buffer)
     return {"file": buffer.getvalue().hex()}
 
-
 # =========================
-# PPT EXPORT (EXECUTIVE STYLE)
+# PPT EXPORT
 # =========================
 @router.post("/pptx")
 def export_pptx(payload: dict = Body(...)):
     prs = Presentation()
 
-    # ---- Cover Slide ----
-    slide = prs.slides.add_slide(prs.slide_layouts[6])
-    left = Inches(3)
-    top = Inches(2)
-
+    # ---- COVER SLIDE ----
+    cover = prs.slides.add_slide(prs.slide_layouts[6])
     if os.path.exists(LOGO_PATH):
-        slide.shapes.add_picture(LOGO_PATH, left, top, width=Inches(2))
+        cover.shapes.add_picture(
+            LOGO_PATH,
+            left=Inches(3),
+            top=Inches(2),
+            width=Inches(2)
+        )
 
-    # ---- Slides per message ----
+    # ---- CONTENT SLIDES ----
     messages = payload.get("messages", [])
-
     for i, m in enumerate(messages, start=1):
         slide = prs.slides.add_slide(prs.slide_layouts[1])
-        slide.shapes.title.text = f"{m.get('role','').title()} {i}"
+        slide.shapes.title.text = f"{m.get('role', '').title()} {i}"
         slide.placeholders[1].text = m.get("content", "")[:3500]
 
     buffer = io.BytesIO()
