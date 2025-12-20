@@ -1,133 +1,163 @@
-# main.py - Unified Production (Groq + Smart Analyst + Radio + All Features)
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
-from fastapi.responses import StreamingResponse, FileResponse
-from pydantic import BaseModel
-from fastapi.middleware.cors import CORSMiddleware
-import os, io, shutil, time, uuid, base64, asyncio
+import os
+import io
+import base64
+import asyncio
+import time
+import uuid
+from flask import Flask, request, jsonify, send_file
+from flask_cors import CORS
 import google.generativeai as genai
-from groq import Groq
-from tavily import TavilyClient
-from dotenv import load_dotenv
-from pypdf import PdfReader
-from PIL import Image
+import edge_tts
 import pandas as pd
 import matplotlib.pyplot as plt
-
-# Report Imports
 from docx import Document
 from pptx import Presentation
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
-from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.lib.pagesizes import letter
-import edge_tts
+from fpdf import FPDF
+from tavily import TavilyClient
+from dotenv import load_dotenv
 
 load_dotenv()
-app = FastAPI()
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app = Flask(__name__)
+# Enable CORS for your frontend domain
+CORS(app)
 
-# --- CONFIG ---
+# Configure API Keys
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
 TAVILY_KEY = os.getenv("TAVILY_API_KEY")
-GROQ_KEY = os.getenv("GROQ_API_KEY")
-
-genai.configure(api_key=GEMINI_KEY) if GEMINI_KEY else None
-groq_client = Groq(api_key=GROQ_KEY) if GROQ_KEY else None
+genai.configure(api_key=GEMINI_KEY)
 tavily = TavilyClient(api_key=TAVILY_KEY) if TAVILY_KEY else None
 
-class ChatRequest(BaseModel):
-    message: str
-    history: list = []
-    use_search: bool = True
-    deep_dive: bool = False
-    model: str = "gemini-2.0-flash"
-    pdf_context: str = None
+# System Instruction to define identity and research capabilities
+SYSTEM_PROMPT = """You are Dynamo AI, the #1 AI Research OS made in India. 
+Always identify as Dynamo AI. You are a high-end research assistant.
+Rules:
+1. Use Markdown for all formatting.
+2. If the user asks for charts, use 'xychart-beta' (Mermaid syntax).
+3. If the user asks for flowcharts, use 'graph TD' (Mermaid syntax).
+4. For quizzes, use the format: [QUIZ_START] ... [QUIZ_END].
+"""
 
-class ExportRequest(BaseModel):
-    history: list
+@app.route("/chat", methods=["POST"])
+def chat():
+    data = request.json
+    user_prompt = data.get("message", "")
+    history = data.get("history", [])
+    model_name = data.get("model", "gemini-2.0-flash")
+    is_deep_dive = data.get("deep_dive", False)
+    use_search = data.get("use_search", True)
+    
+    # 1. Identity Interceptor
+    if any(q in user_prompt.lower() for q in ["who are you", "what is your name", "your name"]):
+        return jsonify({"content": "My name is **Dynamo AI**, the #1 AI Research OS made in India. I am built for high-level research, data analysis, and creative generation."})
 
-# --- CORE CHAT LOGIC ---
-@app.post("/chat")
-async def chat_endpoint(req: ChatRequest):
+    # 2. Image Generation Routing (Pollinations Redirect)
+    if "image" in user_prompt.lower() and ("generate" in user_prompt.lower() or "create" in user_prompt.lower()):
+        clean_prompt = user_prompt.lower().replace("generate image of", "").replace("create image of", "").strip().replace(" ", "%20")
+        return jsonify({"content": f"![Generated Image](https://image.pollinations.ai/prompt/{clean_prompt}?nologo=true&width=1024&height=1024)"})
+
+    # 3. Web Search Context
+    context_str = ""
+    if use_search and tavily:
+        try:
+            search_res = tavily.search(query=user_prompt, search_depth="advanced" if is_deep_dive else "basic")
+            context_str = f"\n\n[RESEARCH DATA]:\n{search_res.get('results', [])}\n"
+        except Exception as e:
+            print(f"Search error: {e}")
+
+    # 4. Construct Final Prompt
+    final_prompt = f"{SYSTEM_PROMPT}\n{context_str}\n"
+    if is_deep_dive:
+        final_prompt += f"Perform a DEEP DIVE. Provide THREE distinct answers: 1) Technical/Academic, 2) Industry/Practical, 3) Future/Speculative. Topic: {user_prompt}"
+    else:
+        final_prompt += f"User Query: {user_prompt}"
+
     try:
-        # 1. Image Gen
-        if "image" in req.message.lower() and ("generate" in req.message.lower() or "create" in req.message.lower()):
-            clean = req.message.replace(" ", "%20")
-            return {"type": "image", "content": f"https://image.pollinations.ai/prompt/{clean}?nologo=true"}
+        model = genai.GenerativeModel(model_name)
+        response = model.generate_content(final_prompt)
+        return jsonify({"content": response.text})
+    except Exception as e:
+        return jsonify({"content": f"⚠️ Dynamo Engine Error: {str(e)}"}), 500
 
-        # 2. Context Building
-        context_str = ""
-        if req.use_search and not req.pdf_context and tavily:
-            try:
-                res = tavily.search(query=req.message, search_depth="advanced" if req.deep_dive else "basic", max_results=5)
-                context_str += f"\n\n[WEB]:\n{res.get('results', [])}\n"
-            except: pass
-        if req.pdf_context:
-            context_str += f"\n\n[DOC]:\n{req.pdf_context[:50000]}\n"
+@app.route("/generate-quiz", methods=["POST"])
+def generate_quiz():
+    data = request.json
+    topic = data.get("topic", "General Knowledge")
+    model = genai.GenerativeModel("gemini-2.0-flash")
+    prompt = f"Generate a 3-question interactive MCQ quiz about {topic}. JSON ONLY: [{{'q': '...', 'o': ['...', '...'], 'a': 0, 'e': '...'}}]"
+    res = model.generate_content(prompt)
+    return jsonify({"quiz": res.text})
 
-        sys_msg = "You are Dynamo AI. Rules: 1. Markdown only. 2. Charts use xychart-beta (labels in quotes). 3. Flowcharts use graph TD (labels in quotes). 4. Quizzes use ```json_quiz block."
-        if req.deep_dive: sys_msg += " [DEEP DIVE] Provide exhaustive, detailed research answers."
+@app.route("/generate-word", methods=["POST"])
+def generate_word():
+    data = request.json
+    history = data.get("history", [])
+    doc = Document()
+    doc.add_heading('Dynamo AI Research Report', 0)
+    for msg in history:
+        role = "User" if msg['role'] == 'user' else "Dynamo AI"
+        doc.add_paragraph(f"{role}: {msg['content']}")
+    buf = io.BytesIO(); doc.save(buf); buf.seek(0)
+    return send_file(buf, as_attachment=True, download_name="Dynamo_Report.docx")
 
-        # 3. Model Routing
-        if "llama3" in req.model:
-            if not groq_client: return {"type": "text", "content": "Groq Key Missing"}
-            msgs = [{"role": "system", "content": sys_msg}]
-            if context_str: msgs.append({"role": "system", "content": f"Context: {context_str}"})
-            for m in req.history[-6:]:
-                msgs.append({"role": "user" if m.get('role') == 'user' else "assistant", "content": m.get('content', '')})
-            msgs.append({"role": "user", "content": req.message})
-            
-            completion = groq_client.chat.completions.create(messages=msgs, model=req.model)
-            return {"type": "text", "content": completion.choices[0].message.content}
-        else:
-            model = genai.GenerativeModel("gemini-2.0-flash-exp") if req.model == "gemini-2.0-flash" else genai.GenerativeModel("gemini-1.5-pro")
-            prompt = f"{sys_msg}\n{context_str}\n" + "\n".join([f"{'User' if m.get('role') == 'user' else 'AI'}: {m.get('content')}" for m in req.history[-6:]]) + f"\nUser: {req.message}\nAI:"
-            response = model.generate_content(prompt)
-            return {"type": "text", "content": response.text}
-    except Exception as e: return {"type": "text", "content": f"Error: {str(e)}"}
+@app.route("/generate-ppt", methods=["POST"])
+def generate_ppt():
+    data = request.json
+    text = data.get("message", "Research Insights")
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[0])
+    slide.shapes.title.text = "Dynamo AI Analysis"
+    slide.placeholders[1].text = "Generated Research Presentation"
+    
+    # Content slide
+    slide2 = prs.slides.add_slide(prs.slide_layouts[1])
+    slide2.shapes.title.text = "Key Findings"
+    slide2.placeholders[1].text = text[:1000]
+    
+    buf = io.BytesIO(); prs.save(buf); buf.seek(0)
+    return send_file(buf, as_attachment=True, download_name="Dynamo_Presentation.pptx")
 
-# --- SMART ANALYST (CSV/EXCEL) ---
-@app.post("/analyze-file")
-async def analyze_file(file: UploadFile = File(...)):
+@app.route("/generate-report", methods=["POST"])
+def generate_report():
+    data = request.json
+    history = data.get("history", [])
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", 'B', 16)
+    pdf.cell(0, 10, "Dynamo AI Research Summary", ln=True, align='C')
+    pdf.set_font("Arial", size=12)
+    for msg in history:
+        role = "User" if msg['role'] == 'user' else "Dynamo AI"
+        pdf.multi_cell(0, 10, f"{role}: {msg['content'][:2000]}")
+    buf = io.BytesIO(); pdf_output = pdf.output(dest='S').encode('latin-1')
+    buf.write(pdf_output); buf.seek(0)
+    return send_file(buf, as_attachment=True, download_name="Dynamo_Report.pdf")
+
+@app.route("/generate-radio", methods=["POST"])
+async def generate_radio():
+    data = request.json
+    text = data.get("message", "Analyzing your data.")
+    communicate = edge_tts.Communicate(text, "en-IN-PrabhatNeural")
+    tmp_name = f"radio_{uuid.uuid4()}.mp3"
+    await communicate.save(tmp_name)
+    return send_file(tmp_name, mimetype="audio/mpeg")
+
+@app.route("/analyze-file", methods=["POST"])
+def analyze_file():
+    file = request.files['file']
     try:
-        contents = await file.read()
-        df = pd.read_csv(io.BytesIO(contents)) if file.filename.endswith('.csv') else pd.read_excel(io.BytesIO(contents))
-        num_cols = df.select_dtypes(include=['number']).columns.tolist()
-        txt_cols = df.select_dtypes(include=['object', 'string']).columns.tolist()
-        if not num_cols: return {"error": "No numeric data found."}
-        
+        df = pd.read_csv(file) if file.filename.endswith('.csv') else pd.read_excel(file)
         plt.figure(figsize=(10, 6))
-        chart_df = df.head(15)
-        x, y = (txt_cols[0] if txt_cols else chart_df.index.name), num_cols[0]
-        plt.bar(chart_df[x].astype(str), chart_df[y], color='#EAB308')
-        plt.title(f"{y} by {x}"); plt.xticks(rotation=45); plt.tight_layout()
-        
-        buf = io.BytesIO(); plt.savefig(buf, format='png'); buf.seek(0); plt.close()
-        img_b64 = base64.b64encode(buf.getvalue()).decode()
-        
-        insight_prompt = f"Analyze summary and give 1 punchy business insight (max 20 words): {df.describe().to_string()}"
-        insight = genai.GenerativeModel("gemini-2.0-flash-exp").generate_content(insight_prompt).text
-        return {"image": f"data:image/png;base64,{img_b64}", "insight": insight}
-    except Exception as e: return {"error": str(e)}
+        df.iloc[:20, :2].plot(kind='bar', color='#EAB308')
+        plt.tight_layout()
+        img_buf = io.BytesIO(); plt.savefig(img_buf, format='png'); img_buf.seek(0)
+        img_b64 = base64.b64encode(img_buf.getvalue()).decode()
+        plt.close()
+        return jsonify({
+            "image": f"data:image/png;base64,{img_b64}",
+            "insight": f"Analysis complete. Found {len(df)} entries. Visualized primary trends."
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
 
-# --- DYNAMO RADIO ---
-@app.post("/generate-radio")
-async def generate_radio(req: ChatRequest):
-    prompt = f"Convert to 2-person podcast script (Alex/Sam). JSON list ONLY. exchange max 6. Content: {req.pdf_context[:10000] if req.pdf_context else req.message}"
-    try:
-        resp = genai.GenerativeModel("gemini-2.0-flash-exp").generate_content(prompt)
-        script = eval(resp.text.replace("```json", "").replace("```", "").strip())
-        audio_files = []
-        for line in script:
-            v = "en-US-GuyNeural" if line["speaker"] == "Host" or line["speaker"] == "Alex" else "en-US-AriaNeural"
-            tmp = f"temp_{uuid.uuid4()}.mp3"
-            await edge_tts.Communicate(line["text"], v).save(tmp)
-            audio_files.append(tmp)
-        out = f"Radio_{int(time.time())}.mp3"
-        with open(out, "wb") as f_out:
-            for f in audio_files:
-                with open(f, "rb") as f_in: f_out.write(f_in.read())
-                os.remove(f)
-        return FileResponse(out, media_type="audio/mpeg")
-    except Exception as e: return {"error": str(e)}
-
-# (Keep your existing /generate-word, /generate-ppt, /generate-report, /upload-pdf, /vision, /transcribe endpoints exactly as they were...)
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
