@@ -1,111 +1,138 @@
-from fastapi import FastAPI
-from pydantic import BaseModel
+from fastapi import FastAPI, Body
 from fastapi.middleware.cors import CORSMiddleware
-import os
+from pydantic import BaseModel
+import os, io
 
-from groq import Groq
+import google.generativeai as genai
+from tavily import TavilyClient
+
+from reportlab.platypus import SimpleDocTemplate, Paragraph
+from reportlab.lib.styles import getSampleStyleSheet
+from docx import Document
+from pptx import Presentation
 
 # =========================
-# APP SETUP
+# APP
 # =========================
 app = FastAPI(title="Dynamo AI Backend")
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # OK for now
-    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # =========================
-# GROQ CLIENT
+# KEYS
 # =========================
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-client = Groq(api_key=GROQ_API_KEY)
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
 
-SUPPORTED_MODELS = {
-    "llama-3.1-8b-instant",
-    "llama-3.1-70b-versatile"
-}
-
-DEFAULT_MODEL = "llama-3.1-8b-instant"
+genai.configure(api_key=GEMINI_API_KEY)
+tavily = TavilyClient(api_key=TAVILY_API_KEY)
 
 # =========================
-# REQUEST SCHEMA
+# SCHEMA
 # =========================
-class ChatRequest(BaseModel):
+class ChatReq(BaseModel):
     message: str
     history: list = []
     use_search: bool = False
     deep_dive: bool = False
-    model: str = DEFAULT_MODEL
-
+    model: str = "gemini-2.0-flash"
 
 # =========================
-# ROOT (OPTIONAL)
+# ROOT
 # =========================
 @app.get("/")
 def root():
     return {"message": "Dynamo AI backend running"}
 
+# =========================
+# HELPERS
+# =========================
+def gemini_answer(prompt: str, temperature: float = 0.7):
+    model = genai.GenerativeModel("models/gemini-2.0-flash")
+    resp = model.generate_content(
+        prompt,
+        generation_config={"temperature": temperature}
+    )
+    return resp.text
+
+def build_context(history):
+    ctx = ""
+    for h in history:
+        if isinstance(h, dict) and "role" in h and "content" in h:
+            ctx += f"{h['role'].upper()}: {h['content']}\n"
+    return ctx
 
 # =========================
-# CHAT ENDPOINT
+# CHAT
 # =========================
 @app.post("/chat")
-def chat(req: ChatRequest):
+def chat(req: ChatReq):
     try:
-        model = req.model if req.model in SUPPORTED_MODELS else DEFAULT_MODEL
+        context = build_context(req.history)
+        prompt = context + "\nUSER: " + req.message
 
-        messages = []
+        # ---- Web Search (only if toggle ON)
+        if req.use_search:
+            search = tavily.search(
+                query=req.message,
+                max_results=5,
+                include_answer=True
+            )
+            sources = "\n".join(
+                [f"- {r['title']}: {r['url']}" for r in search.get("results", [])]
+            )
+            prompt += f"\n\nWEB SOURCES:\n{sources}\n\nAnswer using the sources above."
 
-        # Add history if exists
-        for h in req.history:
-            if "role" in h and "content" in h:
-                messages.append({
-                    "role": h["role"],
-                    "content": h["content"]
-                })
-
-        # Add user message
-        messages.append({
-            "role": "user",
-            "content": req.message
-        })
-
-        # Deep Dive mode (3 answers)
+        # ---- DeepDive (3 answers)
         if req.deep_dive:
-            responses = []
-            for i in range(3):
-                completion = client.chat.completions.create(
-                    model=model,
-                    messages=messages,
-                    temperature=0.7 + (i * 0.2)
+            answers = []
+            temps = [0.5, 0.8, 1.1]
+            for i, t in enumerate(temps, start=1):
+                a = gemini_answer(
+                    f"Provide perspective {i}.\n{prompt}",
+                    temperature=t
                 )
-                responses.append(
-                    completion.choices[0].message.content
-                )
+                answers.append(a)
+            return {"type": "deep_dive", "content": answers}
 
-            return {
-                "type": "deep_dive",
-                "content": responses
-            }
-
-        # Normal chat
-        completion = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=0.7
-        )
-
-        return {
-            "type": "text",
-            "content": completion.choices[0].message.content
-        }
+        # ---- Normal
+        out = gemini_answer(prompt, temperature=0.7)
+        return {"type": "text", "content": out}
 
     except Exception as e:
-        return {
-            "type": "error",
-            "content": f"Dynamo Engine Error: {str(e)}"
-        }
+        return {"type": "error", "content": str(e)}
+
+# =========================
+# EXPORTS
+# =========================
+@app.post("/export/pdf")
+def export_pdf(text: str = Body(..., embed=True)):
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf)
+    styles = getSampleStyleSheet()
+    doc.build([Paragraph(text.replace("\n", "<br/>"), styles["Normal"])])
+    return {"file": buf.getvalue().hex()}
+
+@app.post("/export/docx")
+def export_docx(text: str = Body(..., embed=True)):
+    d = Document()
+    for line in text.split("\n"):
+        d.add_paragraph(line)
+    buf = io.BytesIO()
+    d.save(buf)
+    return {"file": buf.getvalue().hex()}
+
+@app.post("/export/pptx")
+def export_pptx(text: str = Body(..., embed=True)):
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[1])
+    slide.shapes.title.text = "Dynamo AI"
+    slide.placeholders[1].text = text[:4000]
+    buf = io.BytesIO()
+    prs.save(buf)
+    return {"file": buf.getvalue().hex()}
