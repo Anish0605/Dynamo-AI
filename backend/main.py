@@ -10,6 +10,7 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph
 from reportlab.lib.styles import getSampleStyleSheet
 from docx import Document
 from pptx import Presentation
+from export import router as export_router
 
 # =========================
 # APP
@@ -22,6 +23,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.include_router(export_router)
 
 # =========================
 # KEYS
