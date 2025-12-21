@@ -2,13 +2,22 @@
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import uvicorn, os, logging
+import uvicorn, os
 
-# Import Modular Engines
-import config, models, search, vision, voice, export, analyzer, processor, database, flowchart
+# Import Modular Engines 
+import config
+import model 
+import search
+import vision
+import voice
+import export
+import analyzer
+import processor
+import database
 
 app = FastAPI()
 
+# Production CORS setup
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -27,30 +36,36 @@ class ChatReq(BaseModel):
 async def chat(req: ChatReq):
     msg = req.message.lower()
     
-    # 1. Visual Routing
+    # 1. Visual/Image Routing
     if "image" in msg and ("create" in msg or "generate" in msg):
         prompt = req.message.replace("generate image of", "").replace("create image of", "").strip()
         return await vision.generate_image_base64(prompt)
     
-    # 2. Context Logic
-    ctx = search.get_web_context(req.message, req.deep_dive) if req.use_search else ""
+    # 2. Context Logic (Web Search)
+    ctx = ""
+    if req.use_search:
+        ctx = search.get_web_context(req.message, req.deep_dive)
     
-    # 3. Model Logic
-    response = models.get_ai_response(req.message, req.history, req.model, ctx)
+    # 3. Model Logic (Routing to Gemini/Groq via model.py)
+    response = model.get_ai_response(req.message, req.history, req.model, ctx)
     return {"type": "text", "content": response}
 
 @app.post("/generate-radio")
 async def radio(req: ChatReq):
+    # Generates a voice stream for the provided text
     return await voice.generate_voice_stream(req.message)
 
 @app.post("/generate-word")
-async def word_exp(req: dict): return export.word(req.get('history', []))
+async def word_exp(req: dict): 
+    return export.word(req.get('history', []))
 
 @app.post("/generate-ppt")
-async def ppt_exp(req: dict): return export.ppt(req.get('history', []))
+async def ppt_exp(req: dict): 
+    return export.ppt(req.get('history', []))
 
 @app.post("/generate-report")
-async def pdf_exp(req: dict): return export.pdf(req.get('history', []))
+async def pdf_exp(req: dict): 
+    return export.pdf(req.get('history', []))
 
 @app.post("/analyze-data")
 async def analyze_data(file: UploadFile = File(...)):
