@@ -10,32 +10,30 @@ groq_client = Groq(api_key=config.GROQ_KEY) if config.GROQ_KEY else None
 
 def get_ai_response(prompt, history, model_name, context=""):
     """
-    Core logic to route requests to either Gemini or Groq/LLaMA.
-    Includes Dynamo AI Identity check and Mermaid instruction injection.
+    Core AI Routing logic. 
+    Matches the 'model' name requested by main.py.
     """
-    # 1. High-Priority Identity Check
     msg_lower = prompt.lower()
-    if any(q in msg_lower for q in ["who are you", "your name", "what is your name", "who made you"]):
+    # 1. Identity Guard
+    if any(q in msg_lower for q in ["who are you", "your name", "what is your name"]):
         return config.DYNAMO_IDENTITY
 
-    # 2. Prepare Prompt with Mermaid Instructions
+    # 2. Inject Formatting Rules
     sys_instr = flowchart.get_system_instruction()
-    full_prompt = f"{sys_instr}\nCONTEXT:\n{context}\n\nUSER: {prompt}\nAI:"
+    full_prompt = f"{sys_instr}\n\nCONTEXT FROM RESEARCH:\n{context}\n\nUSER QUERY: {prompt}\nDYNAMO AI:"
 
-    # 3. Routing
+    # 3. Execution
     if "llama3" in model_name and groq_client:
         messages = [{"role": "system", "content": sys_instr}]
-        if context:
-            messages.append({"role": "system", "content": f"Context: {context}"})
-        # Add limited history for context
-        for m in history[-6:]:
+        if context: messages.append({"role": "system", "content": f"Context: {context}"})
+        for m in history[-5:]:
             messages.append({"role": "user" if m['role'] == 'user' else "assistant", "content": m['content']})
         messages.append({"role": "user", "content": prompt})
         
         completion = groq_client.chat.completions.create(messages=messages, model=model_name)
         return completion.choices[0].message.content
     else:
-        # Default to Gemini 2.0 Flash
-        model = genai.GenerativeModel("gemini-2.0-flash")
-        response = model.generate_content(full_prompt)
+        # Default Gemini 2.0 Flash
+        gen_model = genai.GenerativeModel("gemini-2.0-flash")
+        response = gen_model.generate_content(full_prompt)
         return response.text
