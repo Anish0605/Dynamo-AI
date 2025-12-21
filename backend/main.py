@@ -1,46 +1,46 @@
-from fastapi import FastAPI
+#main.py
+from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import requests, os
-from export import router as export_router
+import models, search, vision, voice, export, analyzer, processor
 
 app = FastAPI()
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-app.include_router(export_router)
-
-GEMINI_KEY = os.getenv("GEMINI_API_KEY")
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 class ChatReq(BaseModel):
     message: str
-    model: str = "gemini-2.0-flash"
+    history: list = []
+    use_search: bool = True
     deep_dive: bool = False
-    search: bool = False
-
-def gemini(prompt, model):
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_KEY}"
-    payload = {"contents":[{"parts":[{"text":prompt}]}]}
-    r = requests.post(url, json=payload)
-    try:
-        return r.json()["candidates"][0]["content"]["parts"][0]["text"]
-    except:
-        return "No response"
+    model: str = "gemini-2.0-flash"
 
 @app.post("/chat")
-def chat(req: ChatReq):
-    if not req.deep_dive:
-        return {"reply": gemini(req.message, req.model)}
+async def chat(req: ChatReq):
+    msg = req.message.lower()
+    # Image Routing
+    if "image" in msg and ("create" in msg or "generate" in msg):
+        prompt = req.message.replace("generate image of", "").replace("create image of", "").strip()
+        return await vision.generate_image_base64(prompt)
+    
+    # Context & AI Routing
+    ctx = search.get_web_context(req.message, req.deep_dive) if req.use_search else ""
+    response = models.get_ai_response(req.message, req.history, req.model, ctx)
+    return {"type": "text", "content": response}
 
-    answers = []
-    for i in range(3):
-        answers.append(gemini(f"Perspective {i+1}: {req.message}", req.model))
+@app.post("/generate-radio")
+async def radio(req: ChatReq):
+    return await voice.generate_voice_stream(req.message)
 
-    return {
-        "reply": "\n\n---\n\n".join(answers)
-    }
+@app.post("/generate-word")
+async def word_exp(req: dict): return export.word(req['history'])
+
+@app.post("/generate-ppt")
+async def ppt_exp(req: dict): return export.ppt(req['history'])
+
+@app.post("/generate-report")
+async def pdf_exp(req: dict): return export.pdf(req['history'])
+
+if __name__ == "__main__":
+    import uvicorn
+    import os
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
