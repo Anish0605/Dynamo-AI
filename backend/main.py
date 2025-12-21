@@ -1,11 +1,20 @@
-#main.py
-from fastapi import FastAPI, UploadFile, File, Form
+# main.py - High Performance FastAPI Hub
+from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import models, search, vision, voice, export, analyzer, processor
+import uvicorn, os, logging
+
+# Import Modular Engines
+import config, models, search, vision, voice, export, analyzer, processor, database, flowchart
 
 app = FastAPI()
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 class ChatReq(BaseModel):
     message: str
@@ -17,13 +26,16 @@ class ChatReq(BaseModel):
 @app.post("/chat")
 async def chat(req: ChatReq):
     msg = req.message.lower()
-    # Image Routing
+    
+    # 1. Visual Routing
     if "image" in msg and ("create" in msg or "generate" in msg):
         prompt = req.message.replace("generate image of", "").replace("create image of", "").strip()
         return await vision.generate_image_base64(prompt)
     
-    # Context & AI Routing
+    # 2. Context Logic
     ctx = search.get_web_context(req.message, req.deep_dive) if req.use_search else ""
+    
+    # 3. Model Logic
     response = models.get_ai_response(req.message, req.history, req.model, ctx)
     return {"type": "text", "content": response}
 
@@ -32,15 +44,19 @@ async def radio(req: ChatReq):
     return await voice.generate_voice_stream(req.message)
 
 @app.post("/generate-word")
-async def word_exp(req: dict): return export.word(req['history'])
+async def word_exp(req: dict): return export.word(req.get('history', []))
 
 @app.post("/generate-ppt")
-async def ppt_exp(req: dict): return export.ppt(req['history'])
+async def ppt_exp(req: dict): return export.ppt(req.get('history', []))
 
 @app.post("/generate-report")
-async def pdf_exp(req: dict): return export.pdf(req['history'])
+async def pdf_exp(req: dict): return export.pdf(req.get('history', []))
+
+@app.post("/analyze-data")
+async def analyze_data(file: UploadFile = File(...)):
+    contents = await file.read()
+    return analyzer.process_data(contents, file.filename)
 
 if __name__ == "__main__":
-    import uvicorn
-    import os
-    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    port = int(os.environ.get("PORT", 5000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
