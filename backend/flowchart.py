@@ -1,5 +1,4 @@
-# Corrected: Now inside the function
-    return instr
+return instr
 
 def get_deep_dive_instruction():
     """
